@@ -45,7 +45,10 @@ function Resolve-Repository {
     }
 }
 
-Assert-CommandExists -Name "gh"
+$needsGh = (-not $DryRun) -or (-not ($Owner -and $Repo))
+if ($needsGh) {
+    Assert-CommandExists -Name "gh"
+}
 
 $repoRef = Resolve-Repository -OwnerInput $Owner -RepoInput $Repo
 $resolvedOwner = $repoRef.Owner
