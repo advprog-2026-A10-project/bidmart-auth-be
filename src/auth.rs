@@ -93,7 +93,25 @@ pub fn validate_password(password: &str) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{hash_password, verify_password};
+    use uuid::Uuid;
+
+    use super::{
+        decode_jwt, hash_password, hash_token, issue_jwt, validate_email, validate_password,
+        verify_password,
+    };
+    use crate::config::Config;
+
+    fn test_config(secret: &str) -> Config {
+        Config {
+            app_host: "127.0.0.1".to_owned(),
+            app_port: 8080,
+            database_url: "postgres://user:password@localhost/test".to_owned(),
+            database_max_connections: 1,
+            jwt_secret: secret.to_owned(),
+            jwt_expiry_minutes: 30,
+            cors_origin: "*".to_owned(),
+        }
+    }
 
     #[test]
     fn password_hash_and_verify_work() {
@@ -102,5 +120,62 @@ mod tests {
 
         assert!(verify_password(plain, &hashed).expect("verification should run"));
         assert!(!verify_password("wrong-password", &hashed).expect("verification should run"));
+    }
+
+    #[test]
+    fn verify_password_returns_error_for_invalid_hash() {
+        let err = verify_password("whatever", "not-a-valid-password-hash").expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Other(_)));
+    }
+
+    #[test]
+    fn jwt_issue_and_decode_roundtrip() {
+        let cfg = test_config("01234567890123456789012345678901");
+        let user_id = Uuid::new_v4();
+        let email = "user@example.com";
+
+        let token = issue_jwt(user_id, email, &cfg).expect("jwt should be issued");
+        let claims = decode_jwt(&token, &cfg).expect("jwt should decode");
+
+        assert_eq!(claims.sub, user_id);
+        assert_eq!(claims.email, email);
+        assert!(claims.exp >= claims.iat);
+    }
+
+    #[test]
+    fn jwt_decode_fails_with_different_secret() {
+        let cfg_sign = test_config("01234567890123456789012345678901");
+        let cfg_verify = test_config("abcdefghijklmnopqrstuvwxyz123456");
+        let token = issue_jwt(Uuid::new_v4(), "user@example.com", &cfg_sign).expect("jwt");
+
+        let err = decode_jwt(&token, &cfg_verify).expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Unauthorized(_)));
+    }
+
+    #[test]
+    fn hash_token_is_deterministic() {
+        let first = hash_token("sample-token");
+        let second = hash_token("sample-token");
+        let third = hash_token("other-token");
+
+        assert_eq!(first, second);
+        assert_ne!(first, third);
+        assert!(!first.is_empty());
+    }
+
+    #[test]
+    fn validate_email_normalizes_and_rejects_invalid_input() {
+        let normalized = validate_email("  TeSt@Example.COM ").expect("must normalize");
+        assert_eq!(normalized, "test@example.com");
+
+        let invalid = validate_email("invalid-email").expect_err("must reject");
+        assert!(matches!(invalid, crate::error::AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn validate_password_enforces_minimum_length() {
+        assert!(validate_password("12345678").is_ok());
+        let err = validate_password("123").expect_err("must reject short");
+        assert!(matches!(err, crate::error::AppError::BadRequest(_)));
     }
 }

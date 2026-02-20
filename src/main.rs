@@ -63,3 +63,41 @@ async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
         .await
         .context("database migrations failed")
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::config::Config;
+    use sqlx::postgres::PgPoolOptions;
+
+    use super::{connect_pool, run_migrations};
+
+    fn bad_db_config() -> Config {
+        Config {
+            app_host: "127.0.0.1".to_owned(),
+            app_port: 8080,
+            database_url: "postgres://postgres:postgres@localhost:5432/postgres".to_owned(),
+            database_max_connections: 1,
+            jwt_secret: "01234567890123456789012345678901".to_owned(),
+            jwt_expiry_minutes: 30,
+            cors_origin: "*".to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_pool_returns_error_when_db_is_unavailable() {
+        let cfg = bad_db_config();
+        let err = connect_pool(&cfg).await.expect_err("must fail");
+        assert!(err.to_string().contains("failed to connect to postgres"));
+    }
+
+    #[tokio::test]
+    async fn run_migrations_returns_error_when_db_is_unavailable() {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://postgres:postgres@localhost:5432/postgres")
+            .expect("pool should be created");
+
+        let err = run_migrations(&pool).await.expect_err("must fail");
+        assert!(err.to_string().contains("database migrations failed"));
+    }
+}

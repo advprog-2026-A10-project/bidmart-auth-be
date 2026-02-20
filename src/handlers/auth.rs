@@ -263,3 +263,210 @@ async fn store_session(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::Json;
+    use axum::extract::State;
+    use axum::http::{HeaderMap, HeaderValue, header::AUTHORIZATION};
+    use sqlx::postgres::PgPoolOptions;
+
+    use crate::auth::issue_jwt;
+    use crate::config::Config;
+    use crate::models::{LoginRequest, RegisterRequest};
+    use crate::state::AppState;
+
+    use super::{login, logout, me, register};
+
+    fn test_state() -> AppState {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://postgres:postgres@localhost:5432/postgres")
+            .expect("pool should be created");
+
+        let config = Arc::new(Config {
+            app_host: "127.0.0.1".to_owned(),
+            app_port: 8080,
+            database_url: "postgres://postgres:postgres@localhost:5432/postgres".to_owned(),
+            database_max_connections: 1,
+            jwt_secret: "01234567890123456789012345678901".to_owned(),
+            jwt_expiry_minutes: 30,
+            cors_origin: "*".to_owned(),
+        });
+
+        AppState { pool, config }
+    }
+
+    #[tokio::test]
+    async fn register_rejects_invalid_email() {
+        let state = test_state();
+        let payload = RegisterRequest {
+            email: "invalid-email".to_owned(),
+            password: "supersecret123".to_owned(),
+            first_name: None,
+            last_name: None,
+            address: None,
+            postal_code: None,
+            avatar_url: None,
+        };
+
+        let err = register(State(state), Json(payload))
+            .await
+            .expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn register_rejects_short_password() {
+        let state = test_state();
+        let payload = RegisterRequest {
+            email: "user@example.com".to_owned(),
+            password: "short".to_owned(),
+            first_name: None,
+            last_name: None,
+            address: None,
+            postal_code: None,
+            avatar_url: None,
+        };
+
+        let err = register(State(state), Json(payload))
+            .await
+            .expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn register_returns_sqlx_error_when_db_is_unavailable() {
+        let state = test_state();
+        let payload = RegisterRequest {
+            email: "user@example.com".to_owned(),
+            password: "supersecret123".to_owned(),
+            first_name: Some("User".to_owned()),
+            last_name: Some("Test".to_owned()),
+            address: None,
+            postal_code: None,
+            avatar_url: None,
+        };
+
+        let err = register(State(state), Json(payload))
+            .await
+            .expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Sqlx(_)));
+    }
+
+    #[tokio::test]
+    async fn login_rejects_invalid_email() {
+        let state = test_state();
+        let payload = LoginRequest {
+            email: "invalid-email".to_owned(),
+            password: "supersecret123".to_owned(),
+        };
+
+        let err = login(State(state), Json(payload))
+            .await
+            .expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn login_returns_sqlx_error_when_db_is_unavailable() {
+        let state = test_state();
+        let payload = LoginRequest {
+            email: "user@example.com".to_owned(),
+            password: "supersecret123".to_owned(),
+        };
+
+        let err = login(State(state), Json(payload))
+            .await
+            .expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Sqlx(_)));
+    }
+
+    #[tokio::test]
+    async fn me_rejects_missing_authorization_header() {
+        let state = test_state();
+        let err = me(State(state), HeaderMap::new())
+            .await
+            .expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Unauthorized(_)));
+    }
+
+    #[tokio::test]
+    async fn me_rejects_non_bearer_authorization_header() {
+        let state = test_state();
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Basic abc"));
+
+        let err = me(State(state), headers).await.expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Unauthorized(_)));
+    }
+
+    #[tokio::test]
+    async fn me_rejects_invalid_token() {
+        let state = test_state();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer not-a-valid-jwt"),
+        );
+
+        let err = me(State(state), headers).await.expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Unauthorized(_)));
+    }
+
+    #[tokio::test]
+    async fn me_returns_sqlx_error_when_db_is_unavailable() {
+        let state = test_state();
+        let token =
+            issue_jwt(uuid::Uuid::new_v4(), "user@example.com", &state.config).expect("jwt");
+        let mut headers = HeaderMap::new();
+        let header_value = format!("Bearer {token}");
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&header_value).expect("header"),
+        );
+
+        let err = me(State(state), headers).await.expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Sqlx(_)));
+    }
+
+    #[tokio::test]
+    async fn logout_rejects_missing_authorization_header() {
+        let state = test_state();
+        let err = logout(State(state), HeaderMap::new())
+            .await
+            .expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Unauthorized(_)));
+    }
+
+    #[tokio::test]
+    async fn logout_rejects_invalid_token() {
+        let state = test_state();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer not-a-valid-jwt"),
+        );
+
+        let err = logout(State(state), headers).await.expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Unauthorized(_)));
+    }
+
+    #[tokio::test]
+    async fn logout_returns_sqlx_error_when_db_is_unavailable() {
+        let state = test_state();
+        let token =
+            issue_jwt(uuid::Uuid::new_v4(), "user@example.com", &state.config).expect("jwt");
+        let mut headers = HeaderMap::new();
+        let header_value = format!("Bearer {token}");
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&header_value).expect("header"),
+        );
+
+        let err = logout(State(state), headers).await.expect_err("must fail");
+        assert!(matches!(err, crate::error::AppError::Sqlx(_)));
+    }
+}
