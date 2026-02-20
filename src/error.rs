@@ -58,3 +58,65 @@ fn map_sqlx_error(err: &sqlx::Error) -> (StatusCode, String) {
         "database error".to_owned(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::body::to_bytes;
+    use axum::response::IntoResponse;
+
+    use super::AppError;
+
+    #[tokio::test]
+    async fn bad_request_maps_to_400() {
+        let response = AppError::BadRequest("invalid input".to_owned()).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        assert!(text.contains("invalid input"));
+    }
+
+    #[tokio::test]
+    async fn unauthorized_maps_to_401() {
+        let response = AppError::Unauthorized("no token".to_owned()).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn not_found_maps_to_404() {
+        let response = AppError::NotFound("missing".to_owned()).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn sqlx_maps_to_database_error() {
+        let response = AppError::Sqlx(sqlx::Error::RowNotFound).into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        assert!(text.contains("database error"));
+    }
+
+    #[tokio::test]
+    async fn other_maps_to_internal_server_error() {
+        let response = AppError::Other(anyhow::anyhow!("unexpected")).into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        assert!(text.contains("internal server error"));
+    }
+}
