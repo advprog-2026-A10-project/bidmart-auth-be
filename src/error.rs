@@ -46,10 +46,10 @@ impl IntoResponse for AppError {
 }
 
 fn map_sqlx_error(err: &sqlx::Error) -> (StatusCode, String) {
-    if let sqlx::Error::Database(db_err) = err {
-        if db_err.code().as_deref() == Some("23505") {
-            return (StatusCode::CONFLICT, "resource already exists".to_owned());
-        }
+    if let sqlx::Error::Database(db_err) = err
+        && db_err.code().as_deref() == Some("23505")
+    {
+        return (StatusCode::CONFLICT, "resource already exists".to_owned());
     }
 
     tracing::error!(error = %err, "database operation failed");
