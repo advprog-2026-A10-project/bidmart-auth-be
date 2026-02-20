@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - staging
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-test-quality:
+    name: Rust Test + Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COVERAGE_MIN: "80"
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bootstrap guard
+        run: |
+          if [ ! -f Cargo.toml ]; then
+            echo "Cargo.toml not found. Skipping Rust checks."
+            exit 0
+          fi
+
+      - name: Set up Rust
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Check formatting
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Install coverage tool
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Coverage gate
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info --fail-under-lines "$COVERAGE_MIN"
+
+      - name: Upload coverage artifact
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+      - name: SonarQube scan
+        if: ${{ hashFiles('Cargo.toml') != '' && env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' }}
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}

@@ -1,0 +1,90 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - staging
+      - main
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: cd-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  deployment-target:
+    name: Resolve deployment target
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    outputs:
+      target: ${{ steps.target.outputs.target }}
+    steps:
+      - id: target
+        shell: bash
+        run: |
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
+          if [ "$BRANCH" = "staging" ]; then
+            echo "target=staging" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$BRANCH" = "main" ]; then
+            echo "target=production" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Unsupported branch: $BRANCH"
+          exit 1
+
+  deploy-staging:
+    name: Deploy staging
+    needs:
+      - deployment-target
+    if: ${{ needs.deployment-target.outputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Trigger staging deploy
+        env:
+          DEPLOY_WEBHOOK: ${{ secrets.STAGING_DEPLOY_WEBHOOK }}
+        run: |
+          if [ -z "$DEPLOY_WEBHOOK" ]; then
+            echo "Missing STAGING_DEPLOY_WEBHOOK secret."
+            exit 1
+          fi
+          curl --fail --show-error --silent -X POST "$DEPLOY_WEBHOOK"
+
+  deploy-production:
+    name: Deploy production
+    needs:
+      - deployment-target
+    if: ${{ needs.deployment-target.outputs.target == 'production' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Trigger production deploy
+        env:
+          DEPLOY_WEBHOOK: ${{ secrets.PRODUCTION_DEPLOY_WEBHOOK }}
+        run: |
+          if [ -z "$DEPLOY_WEBHOOK" ]; then
+            echo "Missing PRODUCTION_DEPLOY_WEBHOOK secret."
+            exit 1
+          fi
+          curl --fail --show-error --silent -X POST "$DEPLOY_WEBHOOK"
