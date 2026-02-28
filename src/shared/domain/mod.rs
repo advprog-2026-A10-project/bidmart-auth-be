@@ -1,0 +1,1 @@
+// This module contains shared domain entities, errors, and traits that are used across multiple modules in the application.

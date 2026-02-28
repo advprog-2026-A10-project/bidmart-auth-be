@@ -1,0 +1,17 @@
+# Build artifacts
+/target/
+**/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
