@@ -1,0 +1,51 @@
+name: branch-policy
+
+on:
+  pull_request:
+    branches:
+      - staging
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  branch-policy:
+    name: branch-policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate promotion path
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          is_valid_ref() {
+            [[ "$1" =~ ^[A-Za-z0-9._/-]+$ ]]
+          }
+
+          base_ref="${GITHUB_BASE_REF:-}"
+          head_ref="${GITHUB_HEAD_REF:-}"
+
+          if [[ -z "$base_ref" || -z "$head_ref" ]]; then
+            echo "::error::Missing pull request refs. Failing closed."
+            exit 1
+          fi
+
+          if ! is_valid_ref "$base_ref" || ! is_valid_ref "$head_ref"; then
+            echo "::error::Malformed pull request refs. Failing closed."
+            exit 1
+          fi
+
+          if [[ "$base_ref" == "staging" && "$head_ref" == "ci-cd" ]]; then
+            echo "Allowed path: ci-cd -> staging."
+            exit 0
+          fi
+
+          if [[ "$base_ref" == "main" && "$head_ref" == "staging" ]]; then
+            echo "Allowed path: staging -> main."
+            exit 0
+          fi
+
+          echo "::error::Invalid branch flow. Allowed PRs: ci-cd -> staging, staging -> main."
+          exit 1
