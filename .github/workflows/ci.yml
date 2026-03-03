@@ -72,6 +72,32 @@ jobs:
             exit 1
           fi
 
+      - name: Detect pull request change scope
+        id: pr_scope
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+
+            const ciOnlyPatterns = [
+              /^\.github\/workflows\//,
+              /^scripts\/setup-branch-protection\.(ps1|sh)$/,
+              /^ci-cd template\//,
+            ];
+
+            const hasNonCiChanges = files.some((file) => {
+              return !ciOnlyPatterns.some((pattern) => pattern.test(file.filename));
+            });
+
+            core.info(`PR files: ${files.length}, hasNonCiChanges=${hasNonCiChanges}`);
+            core.setOutput('has_non_ci_changes', hasNonCiChanges ? 'true' : 'false');
+
       - name: Detect project type
         id: detect
         shell: bash
@@ -120,17 +146,17 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust toolchain
-        if: steps.detect.outputs.has_rust == 'true'
+        if: steps.detect.outputs.has_rust == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true')
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        if: steps.detect.outputs.has_rust == 'true'
+        if: steps.detect.outputs.has_rust == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true')
         uses: Swatinem/rust-cache@v2
 
       - name: Rust checks
-        if: steps.detect.outputs.has_rust == 'true'
+        if: steps.detect.outputs.has_rust == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true')
         shell: bash
         run: |
           set -euo pipefail
@@ -139,36 +165,42 @@ jobs:
           cargo test --all --all-features
 
       - name: Install cargo-audit
-        if: steps.detect.outputs.has_rust == 'true' && github.event_name == 'pull_request' && (github.base_ref == 'staging' || github.base_ref == 'main')
+        if: steps.detect.outputs.has_rust == 'true' && github.event_name == 'pull_request' && steps.pr_scope.outputs.has_non_ci_changes == 'true' && (github.base_ref == 'staging' || github.base_ref == 'main')
         shell: bash
         run: |
           set -euo pipefail
           cargo install cargo-audit --locked
 
       - name: Rust security audit
-        if: steps.detect.outputs.has_rust == 'true' && github.event_name == 'pull_request' && (github.base_ref == 'staging' || github.base_ref == 'main')
+        if: steps.detect.outputs.has_rust == 'true' && github.event_name == 'pull_request' && steps.pr_scope.outputs.has_non_ci_changes == 'true' && (github.base_ref == 'staging' || github.base_ref == 'main')
         shell: bash
         run: |
           set -euo pipefail
           cargo audit
 
-      - name: Set up Node.js
-        if: steps.detect.outputs.has_node == 'true'
+      - name: Set up Node.js (npm with cache)
+        if: steps.detect.outputs.has_node == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true') && steps.detect.outputs.node_manager == 'npm'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: ${{ steps.detect.outputs.node_manager }}
+          cache: npm
           cache-dependency-path: ${{ steps.detect.outputs.node_lockfile }}
 
+      - name: Set up Node.js (pnpm/yarn)
+        if: steps.detect.outputs.has_node == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true') && steps.detect.outputs.node_manager != 'npm'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Enable Corepack
-        if: steps.detect.outputs.has_node == 'true' && (steps.detect.outputs.node_manager == 'pnpm' || steps.detect.outputs.node_manager == 'yarn')
+        if: steps.detect.outputs.has_node == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true') && (steps.detect.outputs.node_manager == 'pnpm' || steps.detect.outputs.node_manager == 'yarn')
         shell: bash
         run: |
           set -euo pipefail
           corepack enable
 
       - name: Install Node dependencies
-        if: steps.detect.outputs.has_node == 'true'
+        if: steps.detect.outputs.has_node == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true')
         shell: bash
         run: |
           set -euo pipefail
@@ -191,7 +223,7 @@ jobs:
           esac
 
       - name: Node checks
-        if: steps.detect.outputs.has_node == 'true'
+        if: steps.detect.outputs.has_node == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true')
         shell: bash
         run: |
           set -euo pipefail
@@ -240,7 +272,7 @@ jobs:
           run_script_if_present "test"
 
       - name: Node security audit
-        if: steps.detect.outputs.has_node == 'true' && github.event_name == 'pull_request' && (github.base_ref == 'staging' || github.base_ref == 'main')
+        if: steps.detect.outputs.has_node == 'true' && github.event_name == 'pull_request' && steps.pr_scope.outputs.has_non_ci_changes == 'true' && (github.base_ref == 'staging' || github.base_ref == 'main')
         shell: bash
         run: |
           set -euo pipefail
