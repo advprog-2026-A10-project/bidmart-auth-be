@@ -11,7 +11,6 @@ pub mod controllers;
 pub mod repositories;
 pub mod services;
 
-
 pub fn create_router(state: AppState) -> Router {
     let app = Router::new()
         .route("/health", get(health_check))

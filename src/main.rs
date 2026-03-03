@@ -19,9 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = create_pool(&config.database_url).await?;
 
-    let app_state = AppState {
-        _auth_pool: pool,
-    };
+    let app_state = AppState { _auth_pool: pool };
 
     let router = create_router(app_state);
 
