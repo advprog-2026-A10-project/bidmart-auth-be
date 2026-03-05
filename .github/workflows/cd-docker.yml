@@ -1,9 +1,9 @@
-﻿name: cd-docker
+name: cd-docker
 
 on:
   push:
     branches:
-      - ci
+      - ci-cd
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ jobs:
   docker-build-and-push:
     runs-on: ubuntu-latest
     env:
-      IMAGE_NAME: ghcr.io/4{{ github.repository }}
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
       CONTAINER_NAME: bidmart-auth-be
       SERVICE_PORT: 8080
     steps:
@@ -28,14 +28,14 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: 4{{ github.actor }}
-          password: 4{{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: 4{{ env.IMAGE_NAME }}
+          images: ${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-
@@ -45,32 +45,32 @@ jobs:
         with:
           context: .
           push: true
-          tags: 4{{ steps.meta.outputs.tags }}
-          labels: 4{{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
   deploy-ec2:
     needs: docker-build-and-push
-    if: 4{{ secrets.EC2_HOST != '' && secrets.EC2_USER != '' && secrets.EC2_SSH_KEY != '' }}
+    if: ${{ secrets.EC2_HOST != '' && secrets.EC2_USER != '' && secrets.EC2_SSH_KEY != '' }}
     runs-on: ubuntu-latest
     env:
-      IMAGE: ghcr.io/4{{ github.repository }}:sha-4{{ github.sha }}
+      IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
       CONTAINER_NAME: bidmart-auth-be
       SERVICE_PORT: 8080
     steps:
       - name: Deploy on EC2 via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: 4{{ secrets.EC2_HOST }}
-          username: 4{{ secrets.EC2_USER }}
-          key: 4{{ secrets.EC2_SSH_KEY }}
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -euo pipefail
-            echo "4{{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "4{{ github.actor }}" --password-stdin
-            docker pull "4IMAGE"
-            if docker ps -a --format '{{.Names}}' | grep -q "^4CONTAINER_NAME4"; then
-              docker rm -f "4CONTAINER_NAME"
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            docker pull "${IMAGE}"
+            if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+              docker rm -f "${CONTAINER_NAME}"
             fi
             docker run -d --restart unless-stopped \
-              --name "4CONTAINER_NAME" \
-              -p "4SERVICE_PORT:4SERVICE_PORT" \
-              "4IMAGE"
+              --name "${CONTAINER_NAME}" \
+              -p "${SERVICE_PORT}:${SERVICE_PORT}" \
+              "${IMAGE}"
