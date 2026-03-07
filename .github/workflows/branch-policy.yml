@@ -37,8 +37,8 @@ jobs:
             exit 1
           fi
 
-          if [[ "$base_ref" == "staging" && "$head_ref" == "ci-cd" ]]; then
-            echo "Allowed path: ci-cd -> staging."
+          if [[ "$base_ref" == "staging" && "$head_ref" == "develop" ]]; then
+            echo "Allowed path: develop -> staging."
             exit 0
           fi
 
@@ -47,5 +47,5 @@ jobs:
             exit 0
           fi
 
-          echo "::error::Invalid branch flow. Allowed PRs: ci-cd -> staging, staging -> main."
+          echo "::error::Invalid branch flow. Allowed PRs: develop -> staging, staging -> main."
           exit 1

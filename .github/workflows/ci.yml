@@ -3,25 +3,73 @@ name: ci
 on:
   pull_request:
     branches:
-      - ci-cd
+      - develop
       - staging
       - main
   push:
     branches:
-      - ci-cd
+      - develop
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
   pull-requests: read
 
 jobs:
+  db-migration:
+    name: db-migration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/bidmart_ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db
+
+      - name: Install sqlx-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install sqlx-cli --locked --no-default-features --features rustls,postgres
+
+      - name: Verify database migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          sqlx database create
+          sqlx migrate run
+
   ci:
     name: ci
+    needs: db-migration
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Validate trigger refs
         shell: bash
@@ -53,14 +101,14 @@ jobs:
               echo "Invalid branch flow to main. Only staging -> main is allowed."
               exit 1
             fi
-            if [[ "$base" == "staging" && "$head" != "ci-cd" ]]; then
-              echo "Invalid branch flow to staging. Only ci-cd -> staging is allowed."
+            if [[ "$base" == "staging" && "$head" != "develop" ]]; then
+              echo "Invalid branch flow to staging. Only develop -> staging is allowed."
               exit 1
             fi
           elif [[ "$event" == "push" ]]; then
             ref_name="${GITHUB_REF_NAME:-}"
-            if [[ -z "$ref_name" || "$ref_name" != "ci-cd" ]]; then
-              echo "Unexpected push ref. This workflow only accepts pushes to ci-cd."
+            if [[ -z "$ref_name" || "$ref_name" != "develop" ]]; then
+              echo "Unexpected push ref. This workflow only accepts pushes to develop."
               exit 1
             fi
             if ! is_valid_ref "$ref_name"; then
@@ -75,7 +123,7 @@ jobs:
       - name: Detect pull request change scope
         id: pr_scope
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
             const files = await github.paginate(github.rest.pulls.listFiles, {
@@ -86,9 +134,7 @@ jobs:
             });
 
             const ciOnlyPatterns = [
-              /^\.github\/workflows\//,
-              /^scripts\/setup-branch-protection\.(ps1|sh)$/,
-              /^ci-cd template\//,
+              /^\.github\//,
             ];
 
             const hasNonCiChanges = files.some((file) => {
@@ -146,23 +192,24 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust toolchain
-        if: steps.detect.outputs.has_rust == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true')
-        uses: dtolnay/rust-toolchain@stable
+        if: steps.detect.outputs.has_rust == 'true'
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        if: steps.detect.outputs.has_rust == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true')
-        uses: Swatinem/rust-cache@v2
+        if: steps.detect.outputs.has_rust == 'true'
+        uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db
 
       - name: Rust checks
-        if: steps.detect.outputs.has_rust == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true')
+        if: steps.detect.outputs.has_rust == 'true'
         shell: bash
         run: |
           set -euo pipefail
           cargo fmt --all -- --check
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test --all --all-features
+          cargo build --release
 
       - name: Install cargo-audit
         if: steps.detect.outputs.has_rust == 'true' && github.event_name == 'pull_request' && steps.pr_scope.outputs.has_non_ci_changes == 'true' && (github.base_ref == 'staging' || github.base_ref == 'main')
@@ -179,28 +226,28 @@ jobs:
           cargo audit
 
       - name: Set up Node.js (npm with cache)
-        if: steps.detect.outputs.has_node == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true') && steps.detect.outputs.node_manager == 'npm'
-        uses: actions/setup-node@v4
+        if: steps.detect.outputs.has_node == 'true' && steps.detect.outputs.node_manager == 'npm'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: ${{ steps.detect.outputs.node_lockfile }}
 
       - name: Set up Node.js (pnpm/yarn)
-        if: steps.detect.outputs.has_node == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true') && steps.detect.outputs.node_manager != 'npm'
-        uses: actions/setup-node@v4
+        if: steps.detect.outputs.has_node == 'true' && steps.detect.outputs.node_manager != 'npm'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "20"
 
       - name: Enable Corepack
-        if: steps.detect.outputs.has_node == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true') && (steps.detect.outputs.node_manager == 'pnpm' || steps.detect.outputs.node_manager == 'yarn')
+        if: steps.detect.outputs.has_node == 'true' && (steps.detect.outputs.node_manager == 'pnpm' || steps.detect.outputs.node_manager == 'yarn')
         shell: bash
         run: |
           set -euo pipefail
           corepack enable
 
       - name: Install Node dependencies
-        if: steps.detect.outputs.has_node == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true')
+        if: steps.detect.outputs.has_node == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -223,7 +270,7 @@ jobs:
           esac
 
       - name: Node checks
-        if: steps.detect.outputs.has_node == 'true' && (github.event_name != 'pull_request' || steps.pr_scope.outputs.has_non_ci_changes == 'true')
+        if: steps.detect.outputs.has_node == 'true'
         shell: bash
         run: |
           set -euo pipefail

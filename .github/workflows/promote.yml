@@ -8,7 +8,7 @@ on:
         type: choice
         required: true
         options:
-          - ci-cd-to-staging
+          - develop-to-staging
           - staging-to-main
 
 permissions:
@@ -28,8 +28,8 @@ jobs:
 
           selected_path="${{ github.event.inputs.path }}"
           case "$selected_path" in
-            ci-cd-to-staging)
-              echo "head=ci-cd" >> "$GITHUB_OUTPUT"
+            develop-to-staging)
+              echo "head=develop" >> "$GITHUB_OUTPUT"
               echo "base=staging" >> "$GITHUB_OUTPUT"
               ;;
             staging-to-main)
@@ -71,4 +71,3 @@ jobs:
             --base "$base" \
             --title "Promote $head -> $base" \
             --body "Automated promotion PR. Branch protections and required reviews remain enforced."
-

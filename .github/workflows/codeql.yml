@@ -7,7 +7,7 @@ on:
     branches:
       - main
   schedule:
-    - cron: '37 3 * * 1'
+    - cron: "37 3 * * 1"
 permissions:
   security-events: write
   contents: read
@@ -21,7 +21,7 @@ jobs:
       matrix:
         language:
           - "actions"
-          - "rust"
+          - "javascript-typescript"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
