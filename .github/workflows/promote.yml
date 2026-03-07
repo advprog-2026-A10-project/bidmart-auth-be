@@ -1,0 +1,73 @@
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: Promotion path to open as a PR
+        type: choice
+        required: true
+        options:
+          - develop-to-staging
+          - staging-to-main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  promote:
+    name: promote
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve promotion branches
+        id: route
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          selected_path="${{ github.event.inputs.path }}"
+          case "$selected_path" in
+            develop-to-staging)
+              echo "head=develop" >> "$GITHUB_OUTPUT"
+              echo "base=staging" >> "$GITHUB_OUTPUT"
+              ;;
+            staging-to-main)
+              echo "head=staging" >> "$GITHUB_OUTPUT"
+              echo "base=main" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported promotion path: $selected_path"
+              exit 1
+              ;;
+          esac
+
+      - name: Open promotion PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          head="${{ steps.route.outputs.head }}"
+          base="${{ steps.route.outputs.base }}"
+
+          existing_pr="$(gh pr list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --head "$head" \
+            --base "$base" \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [[ -n "$existing_pr" ]]; then
+            echo "Promotion PR already exists: #$existing_pr ($head -> $base)."
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --head "$head" \
+            --base "$base" \
+            --title "Promote $head -> $base" \
+            --body "Automated promotion PR. Branch protections and required reviews remain enforced."
