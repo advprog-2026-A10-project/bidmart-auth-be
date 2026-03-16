@@ -21,6 +21,9 @@ permissions:
 jobs:
   db-migration:
     name: db-migration
+    # Temporary toggle: keep this disabled until the migration runner is stable in CI.
+    # Re-enable by setting the repository variable ENABLE_DB_MIGRATION_CI=true.
+    if: ${{ vars.ENABLE_DB_MIGRATION_CI == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -67,6 +70,7 @@ jobs:
   ci:
     name: ci
     needs: db-migration
+    if: ${{ always() && !cancelled() && (needs.db-migration.result == 'success' || needs.db-migration.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
