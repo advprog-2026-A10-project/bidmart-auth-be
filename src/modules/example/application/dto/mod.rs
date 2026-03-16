@@ -1,5 +1,36 @@
-// Auth DTOs
-// DTOs will be added as specific auth operations are implemented
-// Examples: RegisterUserDto, LoginUserDto, etc.
+use uuid::Uuid;
 
-// Placeholder for now - will be populated when implementing specific auth operations
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisterUserCommand {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisterUserResult {
+    pub user_id: Uuid,
+    pub email: String,
+    pub email_verified: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyEmailCommand {
+    pub token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyEmailResult {
+    pub user_id: Uuid,
+    pub email_verified: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResendVerificationCommand {
+    pub email: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResendVerificationResult {
+    pub user_id: Uuid,
+    pub email: String,
+}
