@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
+use uuid::Uuid;
+use validator::ValidateEmail;
+
 use crate::modules::example::application::dto::{RegisterUserCommand, RegisterUserResult};
 use crate::modules::example::application::use_cases::policy::AuthPolicy;
+use crate::modules::example::domain::entities::{EmailVerificationToken, User};
 use crate::modules::example::domain::errors::AuthError;
 use crate::modules::example::domain::traits::{
     Clock, EmailVerificationTokenRepository, PasswordHasher, UserRepository,
@@ -9,14 +13,14 @@ use crate::modules::example::domain::traits::{
 };
 
 pub struct RegisterUserUseCase {
-    _user_repository: Arc<dyn UserRepository>,
-    _token_repository: Arc<dyn EmailVerificationTokenRepository>,
-    _password_hasher: Arc<dyn PasswordHasher>,
-    _token_generator: Arc<dyn VerificationTokenGenerator>,
-    _token_hasher: Arc<dyn VerificationTokenHasher>,
-    _email_sender: Arc<dyn VerificationEmailSender>,
-    _clock: Arc<dyn Clock>,
-    _policy: AuthPolicy,
+    user_repository: Arc<dyn UserRepository>,
+    token_repository: Arc<dyn EmailVerificationTokenRepository>,
+    password_hasher: Arc<dyn PasswordHasher>,
+    token_generator: Arc<dyn VerificationTokenGenerator>,
+    token_hasher: Arc<dyn VerificationTokenHasher>,
+    email_sender: Arc<dyn VerificationEmailSender>,
+    clock: Arc<dyn Clock>,
+    policy: AuthPolicy,
 }
 
 impl RegisterUserUseCase {
@@ -32,21 +36,70 @@ impl RegisterUserUseCase {
         policy: AuthPolicy,
     ) -> Self {
         Self {
-            _user_repository: user_repository,
-            _token_repository: token_repository,
-            _password_hasher: password_hasher,
-            _token_generator: token_generator,
-            _token_hasher: token_hasher,
-            _email_sender: email_sender,
-            _clock: clock,
-            _policy: policy,
+            user_repository,
+            token_repository,
+            password_hasher,
+            token_generator,
+            token_hasher,
+            email_sender,
+            clock,
+            policy,
         }
     }
 
     pub async fn execute(
         &self,
-        _command: RegisterUserCommand,
+        command: RegisterUserCommand,
     ) -> Result<RegisterUserResult, AuthError> {
-        Err(AuthError::NotImplemented("RegisterUserUseCase::execute"))
+        let normalized_email = normalize_email(&command.email);
+        if !normalized_email.validate_email() {
+            return Err(AuthError::InvalidEmail);
+        }
+
+        if command.password.chars().count() < self.policy.min_password_length {
+            return Err(AuthError::WeakPassword);
+        }
+
+        if self
+            .user_repository
+            .find_by_email(&normalized_email)
+            .await?
+            .is_some()
+        {
+            return Err(AuthError::EmailAlreadyExists);
+        }
+
+        let now = self.clock.now();
+        let password_hash = self.password_hasher.hash(&command.password)?;
+        let user = User::new(Uuid::new_v4(), normalized_email, password_hash, now);
+        let created_user = self.user_repository.create(user).await?;
+
+        let raw_token = self.token_generator.generate()?;
+        let token_hash = self.token_hasher.hash(&raw_token)?;
+        let token = EmailVerificationToken {
+            id: Uuid::new_v4(),
+            user_id: created_user.id,
+            token_hash,
+            created_at: now,
+            expires_at: now + self.policy.verification_token_ttl,
+            consumed_at: None,
+            invalidated_at: None,
+        };
+
+        self.token_repository.save(token).await?;
+        self.email_sender
+            .send_verification_email(&created_user.email, &raw_token)
+            .await?;
+
+        let email_verified = created_user.is_email_verified();
+        Ok(RegisterUserResult {
+            user_id: created_user.id,
+            email: created_user.email,
+            email_verified,
+        })
     }
+}
+
+fn normalize_email(input: &str) -> String {
+    input.trim().to_ascii_lowercase()
 }

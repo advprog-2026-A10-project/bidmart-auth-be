@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Create enum types
 DO $$ BEGIN
     CREATE TYPE user_status AS ENUM ('ACTIVE', 'DISABLED', 'PENDING_VERIFICATION');
@@ -23,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     status USER_STATUS DEFAULT 'PENDING_VERIFICATION',
+    email_verified_at TIMESTAMP WITH TIME ZONE,
     mfa_enabled BOOLEAN DEFAULT false,
     mfa_type MFA_TYPE,
     mfa_secret VARCHAR(255),
@@ -56,7 +59,10 @@ CREATE TABLE IF NOT EXISTS tokens (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     type TOKEN_TYPE NOT NULL,
     token_hash VARCHAR(255) NOT NULL,
-    expired_at TIMESTAMP WITH TIME ZONE NOT NULL
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expired_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    consumed_at TIMESTAMP WITH TIME ZONE,
+    invalidated_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Create roles table
@@ -85,3 +91,4 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expired_at ON sessions(expired_at);
 CREATE INDEX IF NOT EXISTS idx_tokens_user_id ON tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_expired_at ON tokens(expired_at);
+CREATE INDEX IF NOT EXISTS idx_tokens_type_hash ON tokens(type, token_hash);

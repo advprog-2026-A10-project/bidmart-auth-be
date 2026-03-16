@@ -19,7 +19,7 @@ impl AppConfig {
             .join(".env");
 
         // Try current directory first
-        dotenv::dotenv().ok();
+        dotenvy::dotenv().ok();
 
         // If .env doesn't exist in current dir, try project root
         if !project_root.exists() {
@@ -29,7 +29,7 @@ impl AppConfig {
 
             if let Some(path) = cargo_root {
                 if path.exists() {
-                    dotenv::from_path(&path).ok();
+                    dotenvy::from_path(&path).ok();
                 }
             }
         }
