@@ -13,11 +13,25 @@ pub struct EmailVerificationToken {
 }
 
 impl EmailVerificationToken {
-    pub fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
-        self.expires_at <= now
+    pub fn new(
+        id: Uuid,
+        user_id: Uuid,
+        token_hash: String,
+        created_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            id,
+            user_id,
+            token_hash,
+            created_at,
+            expires_at,
+            consumed_at: None,
+            invalidated_at: None,
+        }
     }
 
-    pub fn is_consumed_or_invalidated(&self) -> bool {
-        self.consumed_at.is_some() || self.invalidated_at.is_some()
+    pub fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
+        self.expires_at <= now
     }
 }

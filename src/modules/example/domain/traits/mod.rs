@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::modules::example::domain::entities::{EmailVerificationToken, User};
-use crate::modules::example::domain::errors::AuthError;
+use crate::modules::auth::domain::entities::{EmailVerificationToken, User};
+use crate::modules::auth::domain::errors::AuthError;
 
 #[async_trait]
 pub trait UserRepository: Send + Sync {
@@ -28,7 +28,7 @@ pub trait EmailVerificationTokenRepository: Send + Sync {
         &self,
         user_id: Uuid,
     ) -> Result<Option<EmailVerificationToken>, AuthError>;
-    async fn consume(&self, token_id: Uuid, consumed_at: DateTime<Utc>) -> Result<(), AuthError>;
+    async fn consume(&self, token_id: Uuid, consumed_at: DateTime<Utc>) -> Result<bool, AuthError>;
     async fn invalidate_active_tokens_for_user(
         &self,
         user_id: Uuid,

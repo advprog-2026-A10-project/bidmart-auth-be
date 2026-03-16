@@ -5,12 +5,13 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
-use crate::modules::example::application::use_cases::{
-    AuthPolicy, RegisterUserUseCase, ResendVerificationUseCase, VerifyEmailUseCase,
-};
-use crate::modules::example::domain::entities::{EmailVerificationToken, User};
-use crate::modules::example::domain::errors::AuthError;
-use crate::modules::example::domain::traits::{
+use crate::modules::auth::application::use_cases::policy::AuthPolicy;
+use crate::modules::auth::application::use_cases::register_user_use_case::RegisterUserUseCase;
+use crate::modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
+use crate::modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
+use crate::modules::auth::domain::entities::{EmailVerificationToken, User, UserStatus};
+use crate::modules::auth::domain::errors::AuthError;
+use crate::modules::auth::domain::traits::{
     Clock, EmailVerificationTokenRepository, PasswordHasher, UserRepository,
     VerificationEmailSender, VerificationTokenGenerator, VerificationTokenHasher,
 };
@@ -21,9 +22,10 @@ pub fn fixed_now() -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-pub fn sample_user(email: &str, now: DateTime<Utc>) -> User {
+pub fn sample_user(name: &str, email: &str, now: DateTime<Utc>) -> User {
     User::new(
         Uuid::new_v4(),
+        name,
         email.to_string(),
         "hashed::already".to_string(),
         now,
@@ -109,6 +111,9 @@ impl UserRepository for FakeUserRepository {
         }
 
         let mut state = self.state.lock().expect("state lock poisoned");
+        if state.users_by_email.contains_key(&user.email) {
+            return Err(AuthError::EmailAlreadyExists);
+        }
         state.created_users.push(user.clone());
         state
             .users_by_email
@@ -150,7 +155,9 @@ impl UserRepository for FakeUserRepository {
 
         let mut updated_user: Option<User> = None;
         if let Some(user) = state.users_by_id.get_mut(&user_id) {
+            user.status = UserStatus::Active;
             user.email_verified_at = Some(verified_at);
+            user.updated_at = verified_at;
             updated_user = Some(user.clone());
         }
 
@@ -254,7 +261,7 @@ impl EmailVerificationTokenRepository for FakeTokenRepository {
         Ok(latest)
     }
 
-    async fn consume(&self, token_id: Uuid, consumed_at: DateTime<Utc>) -> Result<(), AuthError> {
+    async fn consume(&self, token_id: Uuid, consumed_at: DateTime<Utc>) -> Result<bool, AuthError> {
         if let Some(err) = self
             .consume_error
             .lock()
@@ -267,13 +274,16 @@ impl EmailVerificationTokenRepository for FakeTokenRepository {
         let mut state = self.state.lock().expect("state lock poisoned");
         state.consume_calls.push((token_id, consumed_at));
 
+        let mut updated = false;
         for token in state.tokens_by_hash.values_mut() {
-            if token.id == token_id {
+            if token.id == token_id && token.consumed_at.is_none() && token.invalidated_at.is_none()
+            {
                 token.consumed_at = Some(consumed_at);
+                updated = true;
             }
         }
 
-        Ok(())
+        Ok(updated)
     }
 
     async fn invalidate_active_tokens_for_user(
@@ -315,6 +325,12 @@ pub struct FakePasswordHasherState {
 pub struct FakePasswordHasher {
     pub state: Mutex<FakePasswordHasherState>,
     pub hash_error: Mutex<Option<AuthError>>,
+}
+
+impl FakePasswordHasher {
+    pub fn snapshot(&self) -> FakePasswordHasherState {
+        self.state.lock().expect("state lock poisoned").clone()
+    }
 }
 
 impl PasswordHasher for FakePasswordHasher {
@@ -559,7 +575,7 @@ impl Default for UseCaseTestContext {
 pub fn short_cooldown_policy() -> AuthPolicy {
     AuthPolicy {
         min_password_length: 8,
-        verification_token_ttl: Duration::minutes(15),
+        verification_token_ttl: Duration::seconds(30),
         resend_cooldown: Duration::seconds(30),
     }
 }

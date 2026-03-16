@@ -11,7 +11,7 @@ impl Default for AuthPolicy {
     fn default() -> Self {
         Self {
             min_password_length: 8,
-            verification_token_ttl: Duration::minutes(15),
+            verification_token_ttl: Duration::seconds(30),
             resend_cooldown: Duration::seconds(30),
         }
     }

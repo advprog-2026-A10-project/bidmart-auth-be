@@ -1,22 +1,22 @@
 use chrono::Duration;
 
-use crate::modules::example::application::dto::VerifyEmailCommand;
-use crate::modules::example::application::use_cases::test_support::{
+use crate::modules::auth::application::dto::VerifyEmailCommand;
+use crate::modules::auth::application::use_cases::test_support::{
     fixed_now, sample_user, UseCaseTestContext,
 };
-use crate::modules::example::domain::errors::AuthError;
+use crate::modules::auth::domain::errors::AuthError;
 
 #[tokio::test]
 async fn verify_email_with_valid_token_marks_user_verified_and_consumes_token() {
     let now = fixed_now();
     let context = UseCaseTestContext::new(now);
-    let user = sample_user("verify.ok@example.com", now);
+    let user = sample_user("Verify Ok", "verify.ok@example.com", now);
     context.user_repository.insert_user(user.clone());
     context.seed_token_from_raw(
         user.id,
         "valid-token",
         now - Duration::minutes(1),
-        now + Duration::minutes(14),
+        now + Duration::seconds(20),
     );
 
     let use_case = context.verify_email_use_case();
@@ -26,7 +26,8 @@ async fn verify_email_with_valid_token_marks_user_verified_and_consumes_token() 
         })
         .await;
 
-    result.expect("verification should succeed");
+    let verified = result.expect("verification should succeed");
+    assert_eq!(verified.message, "Email verified.");
 
     let user_state = context.user_repository.snapshot();
     assert_eq!(user_state.mark_email_verified_calls.len(), 1);
@@ -53,12 +54,12 @@ async fn verify_email_rejects_invalid_token() {
 async fn verify_email_rejects_expired_token() {
     let now = fixed_now();
     let context = UseCaseTestContext::new(now);
-    let user = sample_user("expired.token@example.com", now);
+    let user = sample_user("Expired Token", "expired.token@example.com", now);
     context.user_repository.insert_user(user.clone());
     context.seed_token_from_raw(
         user.id,
         "expired-token",
-        now - Duration::minutes(20),
+        now - Duration::seconds(40),
         now - Duration::seconds(1),
     );
 
@@ -76,15 +77,15 @@ async fn verify_email_rejects_expired_token() {
 async fn verify_email_rejects_already_used_token() {
     let now = fixed_now();
     let context = UseCaseTestContext::new(now);
-    let user = sample_user("used.token@example.com", now);
+    let user = sample_user("Used Token", "used.token@example.com", now);
     context.user_repository.insert_user(user.clone());
     let mut used = context.seed_token_from_raw(
         user.id,
         "already-used-token",
-        now - Duration::minutes(2),
-        now + Duration::minutes(13),
+        now - Duration::seconds(10),
+        now + Duration::seconds(20),
     );
-    used.consumed_at = Some(now - Duration::minutes(1));
+    used.consumed_at = Some(now - Duration::seconds(5));
     context.token_repository.insert_token(used);
 
     let use_case = context.verify_email_use_case();
@@ -101,14 +102,14 @@ async fn verify_email_rejects_already_used_token() {
 async fn verify_email_rejects_when_user_is_already_verified() {
     let now = fixed_now();
     let context = UseCaseTestContext::new(now);
-    let mut user = sample_user("already.verified@example.com", now);
-    user.email_verified_at = Some(now - Duration::minutes(10));
+    let mut user = sample_user("Already Verified", "already.verified@example.com", now);
+    user.email_verified_at = Some(now - Duration::seconds(10));
     context.user_repository.insert_user(user.clone());
     context.seed_token_from_raw(
         user.id,
         "token-for-verified-user",
-        now - Duration::minutes(1),
-        now + Duration::minutes(14),
+        now - Duration::seconds(10),
+        now + Duration::seconds(20),
     );
 
     let use_case = context.verify_email_use_case();
@@ -125,13 +126,13 @@ async fn verify_email_rejects_when_user_is_already_verified() {
 async fn verify_email_must_hash_raw_token_before_lookup() {
     let now = fixed_now();
     let context = UseCaseTestContext::new(now);
-    let user = sample_user("hash.lookup@example.com", now);
+    let user = sample_user("Hash Lookup", "hash.lookup@example.com", now);
     context.user_repository.insert_user(user.clone());
     context.seed_token_from_raw(
         user.id,
         "hash-lookup-token",
-        now - Duration::minutes(1),
-        now + Duration::minutes(14),
+        now - Duration::seconds(10),
+        now + Duration::seconds(20),
     );
 
     let use_case = context.verify_email_use_case();
