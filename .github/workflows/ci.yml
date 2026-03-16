@@ -41,7 +41,7 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/bidmart_ci
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
@@ -49,7 +49,7 @@ jobs:
           toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
 
       - name: Install sqlx-cli
         shell: bash
@@ -71,7 +71,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Validate trigger refs
         shell: bash
@@ -125,7 +125,7 @@ jobs:
       - name: Detect pull request change scope
         id: pr_scope
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         with:
           script: |
             const files = await github.paginate(github.rest.pulls.listFiles, {
@@ -202,7 +202,7 @@ jobs:
 
       - name: Cache Rust dependencies
         if: steps.detect.outputs.has_rust == 'true'
-        uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
 
       - name: Rust checks
         if: steps.detect.outputs.has_rust == 'true'
@@ -226,11 +226,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo audit
+          # sqlx 0.8.x still pulls this advisory into Cargo.lock via optional mysql support.
+          # There is no fixed upgrade available upstream yet, so we ignore only that ID.
+          cargo audit --ignore RUSTSEC-2023-0071
 
       - name: Set up Node.js (npm with cache)
         if: steps.detect.outputs.has_node == 'true' && steps.detect.outputs.node_manager == 'npm'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
           node-version: "20"
           cache: npm
@@ -238,7 +240,7 @@ jobs:
 
       - name: Set up Node.js (pnpm/yarn)
         if: steps.detect.outputs.has_node == 'true' && steps.detect.outputs.node_manager != 'npm'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
           node-version: "20"
 

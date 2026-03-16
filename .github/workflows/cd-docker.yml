@@ -22,10 +22,10 @@ jobs:
     env:
       IMAGE_NAME: ghcr.io/${{ github.repository }}
       CONTAINER_NAME: bidmart-auth-be
-      SERVICE_PORT: 80
+      CONTAINER_PORT: 8080
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
@@ -77,10 +77,16 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
       CONTAINER_NAME: bidmart-auth-be
-      SERVICE_PORT: 80
+      HOST_PORT: 80
+      CONTAINER_PORT: 8080
       EC2_HOST: ${{ secrets.EC2_HOST }}
       EC2_USER: ${{ secrets.EC2_USER }}
       EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      APP_SERVER_HOST: ${{ secrets.APP_SERVER_HOST }}
+      APP_SERVER_PORT: ${{ secrets.APP_SERVER_PORT }}
+      APP_DATABASE_URL: ${{ secrets.APP_DATABASE_URL }}
+      APP_JWT_SECRET: ${{ secrets.APP_JWT_SECRET }}
+      APP_JWT_EXPIRATION_HOURS: ${{ secrets.APP_JWT_EXPIRATION_HOURS }}
     steps:
       - name: Check deploy prerequisites
         id: deploy_gate
@@ -88,12 +94,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -n "${EC2_HOST:-}" && -n "${EC2_USER:-}" && -n "${EC2_SSH_KEY:-}" ]]; then
+          if [[ -n "${EC2_HOST:-}" && -n "${EC2_USER:-}" && -n "${EC2_SSH_KEY:-}" && -n "${APP_DATABASE_URL:-}" && -n "${APP_JWT_SECRET:-}" ]]; then
             echo "should_deploy=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "EC2 secrets are not fully configured. Skipping deployment step."
+          echo "EC2 or application runtime secrets are not fully configured. Skipping deployment step."
           echo "should_deploy=false" >> "$GITHUB_OUTPUT"
 
       - name: Deploy on EC2 via SSH
@@ -103,8 +109,12 @@ jobs:
           host: ${{ env.EC2_HOST }}
           username: ${{ env.EC2_USER }}
           key: ${{ env.EC2_SSH_KEY }}
+          envs: IMAGE,CONTAINER_NAME,HOST_PORT,CONTAINER_PORT,APP_SERVER_HOST,APP_SERVER_PORT,APP_DATABASE_URL,APP_JWT_SECRET,APP_JWT_EXPIRATION_HOURS
           script: |
             set -euo pipefail
+            server_host="${APP_SERVER_HOST:-0.0.0.0}"
+            server_port="${APP_SERVER_PORT:-$CONTAINER_PORT}"
+            jwt_expiration_hours="${APP_JWT_EXPIRATION_HOURS:-24}"
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             docker pull "${IMAGE}"
             if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -112,5 +122,10 @@ jobs:
             fi
             docker run -d --restart unless-stopped \
               --name "${CONTAINER_NAME}" \
-              -p "${SERVICE_PORT}:${SERVICE_PORT}" \
+              -p "${HOST_PORT}:${CONTAINER_PORT}" \
+              -e APP_SERVER_HOST="${server_host}" \
+              -e APP_SERVER_PORT="${server_port}" \
+              -e APP_DATABASE_URL="${APP_DATABASE_URL}" \
+              -e APP_JWT_SECRET="${APP_JWT_SECRET}" \
+              -e APP_JWT_EXPIRATION_HOURS="${jwt_expiration_hours}" \
               "${IMAGE}"
