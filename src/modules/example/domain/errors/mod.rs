@@ -1,2 +1,27 @@
-// For errors related to authentication domain, such as validation errors, authentication failures, etc.
-// These errors can be used across the application, repositories, and controllers as needed.
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum AuthError {
+    #[error("invalid email")]
+    InvalidEmail,
+    #[error("weak password")]
+    WeakPassword,
+    #[error("email already exists")]
+    EmailAlreadyExists,
+    #[error("user not found")]
+    UserNotFound,
+    #[error("user already verified")]
+    UserAlreadyVerified,
+    #[error("verification token invalid")]
+    VerificationTokenInvalid,
+    #[error("verification token expired")]
+    VerificationTokenExpired,
+    #[error("verification token already used")]
+    VerificationTokenAlreadyUsed,
+    #[error("verification cooldown active")]
+    VerificationCooldownActive,
+    #[error("dependency failure: {0}")]
+    DependencyFailure(String),
+    #[error("not implemented: {0}")]
+    NotImplemented(&'static str),
+}
