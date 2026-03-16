@@ -30,7 +30,7 @@ jobs:
           publish_results: true
           # Uncomment if this repository is private or if the Branch-Protection
           # check needs a fine-grained PAT instead of repository rules.
-          # repo_token: ${{ secrets.SCORECARD_READ_TOKEN }}
+          repo_token: ${{ secrets.SCORECARD_READ_TOKEN }}
       - name: Upload SARIF to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@38b3b7bf288d49ccf58644769dc7a6afdccd05eb
         with:
