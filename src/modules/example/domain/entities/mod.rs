@@ -1,2 +1,5 @@
-// For storing domain entities related to authentication, such as User, Role, etc.
-// These entities will be used across the application, repositories, and controllers as needed.
+pub mod email_verification_token;
+pub mod user;
+
+pub use email_verification_token::EmailVerificationToken;
+pub use user::{normalize_name, User, UserStatus};
