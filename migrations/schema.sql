@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
     mfa_enabled BOOLEAN DEFAULT false,
     mfa_type MFA_TYPE,
     mfa_secret VARCHAR(255),
+    email_verified_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -56,7 +57,10 @@ CREATE TABLE IF NOT EXISTS tokens (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     type TOKEN_TYPE NOT NULL,
     token_hash VARCHAR(255) NOT NULL,
-    expired_at TIMESTAMP WITH TIME ZONE NOT NULL
+    expired_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    consumed_at TIMESTAMP WITH TIME ZONE,
+    invalidated_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Create roles table
@@ -85,3 +89,4 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expired_at ON sessions(expired_at);
 CREATE INDEX IF NOT EXISTS idx_tokens_user_id ON tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_expired_at ON tokens(expired_at);
+CREATE INDEX IF NOT EXISTS idx_tokens_type_hash ON tokens(type, token_hash);

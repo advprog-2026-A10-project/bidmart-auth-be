@@ -1,16 +1,18 @@
 use std::sync::Arc;
 
-use crate::modules::example::application::dto::{VerifyEmailCommand, VerifyEmailResult};
-use crate::modules::example::domain::errors::AuthError;
-use crate::modules::example::domain::traits::{
+use crate::modules::auth::application::dto::{
+    VerifyEmailCommand, VerifyEmailResult, VERIFY_EMAIL_SUCCESS_MESSAGE,
+};
+use crate::modules::auth::domain::errors::AuthError;
+use crate::modules::auth::domain::traits::{
     Clock, EmailVerificationTokenRepository, UserRepository, VerificationTokenHasher,
 };
 
 pub struct VerifyEmailUseCase {
-    _user_repository: Arc<dyn UserRepository>,
-    _token_repository: Arc<dyn EmailVerificationTokenRepository>,
-    _token_hasher: Arc<dyn VerificationTokenHasher>,
-    _clock: Arc<dyn Clock>,
+    user_repository: Arc<dyn UserRepository>,
+    token_repository: Arc<dyn EmailVerificationTokenRepository>,
+    token_hasher: Arc<dyn VerificationTokenHasher>,
+    clock: Arc<dyn Clock>,
 }
 
 impl VerifyEmailUseCase {
@@ -21,17 +23,58 @@ impl VerifyEmailUseCase {
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
-            _user_repository: user_repository,
-            _token_repository: token_repository,
-            _token_hasher: token_hasher,
-            _clock: clock,
+            user_repository,
+            token_repository,
+            token_hasher,
+            clock,
         }
     }
 
     pub async fn execute(
         &self,
-        _command: VerifyEmailCommand,
+        command: VerifyEmailCommand,
     ) -> Result<VerifyEmailResult, AuthError> {
-        Err(AuthError::NotImplemented("VerifyEmailUseCase::execute"))
+        if command.token.trim().is_empty() {
+            return Err(AuthError::VerificationTokenInvalid);
+        }
+
+        let now = self.clock.now();
+        let token_hash = self.token_hasher.hash(&command.token)?;
+        let token = self
+            .token_repository
+            .find_by_token_hash(&token_hash)
+            .await?
+            .ok_or(AuthError::VerificationTokenInvalid)?;
+
+        if token.consumed_at.is_some() || token.invalidated_at.is_some() {
+            return Err(AuthError::VerificationTokenAlreadyUsed);
+        }
+
+        if token.is_expired_at(now) {
+            return Err(AuthError::VerificationTokenExpired);
+        }
+
+        let user = self
+            .user_repository
+            .find_by_id(token.user_id)
+            .await?
+            .ok_or(AuthError::UserNotFound)?;
+
+        if user.is_email_verified() {
+            return Err(AuthError::UserAlreadyVerified);
+        }
+
+        let consumed = self.token_repository.consume(token.id, now).await?;
+        if !consumed {
+            return Err(AuthError::VerificationTokenAlreadyUsed);
+        }
+
+        self.user_repository
+            .mark_email_verified(user.id, now)
+            .await?;
+
+        Ok(VerifyEmailResult {
+            message: VERIFY_EMAIL_SUCCESS_MESSAGE.to_string(),
+        })
     }
 }

@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AuthError {
+    #[error("invalid name")]
+    InvalidName,
     #[error("invalid email")]
     InvalidEmail,
     #[error("weak password")]
@@ -22,6 +24,4 @@ pub enum AuthError {
     VerificationCooldownActive,
     #[error("dependency failure: {0}")]
     DependencyFailure(String),
-    #[error("not implemented: {0}")]
-    NotImplemented(&'static str),
 }
