@@ -1,3 +1,4 @@
+use base64::Engine;
 use config::ConfigError;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -10,6 +11,12 @@ pub struct AppConfig {
     pub auth_min_password_length: usize,
     pub auth_verification_token_ttl_seconds: i64,
     pub auth_resend_cooldown_seconds: i64,
+    pub auth_mfa_ticket_ttl_seconds: i64,
+    pub auth_email_mfa_code_ttl_seconds: i64,
+    pub auth_email_mfa_cooldown_seconds: i64,
+    pub auth_access_token_ttl_seconds: i64,
+    pub auth_totp_setup_ttl_seconds: i64,
+    pub auth_jwt_secret: String,
     pub resend_api_key: String,
     pub resend_from_email: String,
     pub verify_email_url_base: String,
@@ -48,11 +55,46 @@ impl AppConfig {
                 "APP_AUTH_RESEND_COOLDOWN_SECONDS",
                 30,
             )?,
+            auth_mfa_ticket_ttl_seconds: optional_parsed_env(
+                "APP_AUTH_MFA_TICKET_TTL_SECONDS",
+                300,
+            )?,
+            auth_email_mfa_code_ttl_seconds: optional_parsed_env(
+                "APP_AUTH_EMAIL_MFA_CODE_TTL_SECONDS",
+                300,
+            )?,
+            auth_email_mfa_cooldown_seconds: optional_parsed_env(
+                "APP_AUTH_EMAIL_MFA_COOLDOWN_SECONDS",
+                30,
+            )?,
+            auth_access_token_ttl_seconds: optional_parsed_env(
+                "APP_AUTH_ACCESS_TOKEN_TTL_SECONDS",
+                3600,
+            )?,
+            auth_totp_setup_ttl_seconds: optional_parsed_env(
+                "APP_AUTH_TOTP_SETUP_TTL_SECONDS",
+                600,
+            )?,
+            auth_jwt_secret: required_jwt_secret("APP_AUTH_JWT_SECRET")?,
             resend_api_key: required_env("APP_RESEND_API_KEY")?,
             resend_from_email: required_env("APP_RESEND_FROM_EMAIL")?,
             verify_email_url_base: required_env("APP_VERIFY_EMAIL_URL_BASE")?,
         })
     }
+}
+
+fn required_jwt_secret(key: &str) -> Result<String, ConfigError> {
+    let value = required_env(key)?;
+    let key_material_len = base64::engine::general_purpose::STANDARD
+        .decode(&value)
+        .map(|bytes| bytes.len())
+        .unwrap_or_else(|_| value.len());
+    if key_material_len < 32 {
+        return Err(ConfigError::Message(format!(
+            "Invalid {key}: use at least 32 bytes of key material or standard base64-encoded bytes"
+        )));
+    }
+    Ok(value)
 }
 
 fn required_env(key: &str) -> Result<String, ConfigError> {

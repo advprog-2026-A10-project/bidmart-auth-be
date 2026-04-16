@@ -13,17 +13,20 @@ use tokio::net::TcpListener;
 use infrastructure::config::AppConfig;
 use infrastructure::database::create_pool;
 use infrastructure::logger::init_tracer;
+use modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
 use modules::auth::application::use_cases::policy::AuthPolicy;
 use modules::auth::application::use_cases::register_user_use_case::RegisterUserUseCase;
 use modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
 use modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
 use modules::auth::infrastructure::create_router;
 use modules::auth::infrastructure::repositories::{
-    PostgresEmailVerificationTokenRepository, PostgresUserRepository,
+    PostgresEmailMfaCodeRepository, PostgresEmailVerificationTokenRepository,
+    PostgresMfaTicketRepository, PostgresSessionRepository, PostgresTotpSetupRepository,
+    PostgresUserRepository,
 };
 use modules::auth::infrastructure::services::{
-    RandomVerificationTokenGenerator, ResendVerificationEmailSender, ScryptPasswordHasher,
-    Sha256VerificationTokenHasher, SystemClock,
+    Hs256JwtService, RandomVerificationTokenGenerator, ResendVerificationEmailSender,
+    ScryptPasswordHasher, Sha256VerificationTokenHasher, SystemClock, TotpRsService,
 };
 use modules::auth::infrastructure::AppState;
 
@@ -38,7 +41,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     migrator.run(&pool).await?;
 
     let user_repository = Arc::new(PostgresUserRepository::new(pool.clone()));
-    let token_repository = Arc::new(PostgresEmailVerificationTokenRepository::new(pool));
+    let token_repository = Arc::new(PostgresEmailVerificationTokenRepository::new(pool.clone()));
+    let mfa_ticket_repository = Arc::new(PostgresMfaTicketRepository::new(pool.clone()));
+    let email_mfa_code_repository = Arc::new(PostgresEmailMfaCodeRepository::new(pool.clone()));
+    let session_repository = Arc::new(PostgresSessionRepository::new(pool.clone()));
+    let totp_setup_repository = Arc::new(PostgresTotpSetupRepository::new(pool));
     let password_hasher = Arc::new(ScryptPasswordHasher);
     let token_generator = Arc::new(RandomVerificationTokenGenerator);
     let token_hasher = Arc::new(Sha256VerificationTokenHasher);
@@ -49,16 +56,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.verify_email_url_base.clone(),
     ));
     let clock = Arc::new(SystemClock);
+    let jwt_service = Arc::new(Hs256JwtService::new(
+        &config.auth_jwt_secret,
+        config.auth_access_token_ttl_seconds,
+    ));
+    let totp_service = Arc::new(TotpRsService);
     let auth_policy = AuthPolicy {
         min_password_length: config.auth_min_password_length,
         verification_token_ttl: Duration::seconds(config.auth_verification_token_ttl_seconds),
         resend_cooldown: Duration::seconds(config.auth_resend_cooldown_seconds),
+        mfa_ticket_ttl: Duration::seconds(config.auth_mfa_ticket_ttl_seconds),
+        email_mfa_code_ttl: Duration::seconds(config.auth_email_mfa_code_ttl_seconds),
+        email_mfa_cooldown: Duration::seconds(config.auth_email_mfa_cooldown_seconds),
+        access_token_ttl: Duration::seconds(config.auth_access_token_ttl_seconds),
+        totp_setup_ttl: Duration::seconds(config.auth_totp_setup_ttl_seconds),
     };
 
     let register_use_case = Arc::new(RegisterUserUseCase::new(
         user_repository.clone(),
         token_repository.clone(),
-        password_hasher,
+        password_hasher.clone(),
         token_generator.clone(),
         token_hasher.clone(),
         email_sender.clone(),
@@ -72,12 +89,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         clock.clone(),
     ));
     let resend_verification_use_case = Arc::new(ResendVerificationUseCase::new(
+        user_repository.clone(),
+        token_repository.clone(),
+        token_generator.clone(),
+        token_hasher.clone(),
+        email_sender.clone(),
+        clock.clone(),
+        auth_policy.clone(),
+    ));
+    let auth_mfa_use_case = Arc::new(AuthMfaUseCase::new(
         user_repository,
-        token_repository,
+        mfa_ticket_repository,
+        email_mfa_code_repository,
+        session_repository.clone(),
+        totp_setup_repository,
+        password_hasher.clone(),
         token_generator,
         token_hasher,
         email_sender,
-        clock,
+        jwt_service.clone(),
+        totp_service,
+        clock.clone(),
         auth_policy,
     ));
 
@@ -85,6 +117,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         register_use_case,
         verify_email_use_case,
         resend_verification_use_case,
+        auth_mfa_use_case,
+        jwt_service,
+        session_repository,
+        clock,
     );
 
     let router = create_router(app_state);

@@ -9,10 +9,14 @@ use serde::Serialize;
 use validator::{Validate, ValidationErrors};
 
 use crate::modules::auth::application::dto::{
-    MessageResponseDto, RegisterResponseDto, RegisterUserCommand, ResendVerificationCommand,
-    VerifyEmailCommand,
+    AccessTokenResponseDto, DisableMfaCommand, LoginCommand, LoginResponseDto, MessageResponseDto,
+    MfaSettingsDto, RegisterResponseDto, RegisterUserCommand, ResendVerificationCommand,
+    SendEmailMfaCommand, SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult,
+    VerifyEmailCommand, VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand,
+    VerifyTotpSetupCommand,
 };
 use crate::modules::auth::domain::errors::AuthError;
+use crate::modules::auth::infrastructure::auth_extractor::AuthenticatedUser;
 use crate::modules::auth::infrastructure::AppState;
 
 #[derive(Debug, Serialize)]
@@ -56,6 +60,179 @@ pub async fn verify_email(
         .map_err(ApiError::from_auth_error)?;
 
     Ok(Json(result.into()))
+}
+
+pub async fn login(
+    State(state): State<AppState>,
+    payload: Result<Json<LoginCommand>, JsonRejection>,
+) -> Result<Json<LoginResponseDto>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+
+    let result = state
+        .auth_mfa_use_case
+        .login(command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+
+    Ok(Json(result.into()))
+}
+
+pub async fn send_email_mfa(
+    State(state): State<AppState>,
+    payload: Result<Json<SendEmailMfaCommand>, JsonRejection>,
+) -> Result<Json<MessageResponseDto>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+    state
+        .auth_mfa_use_case
+        .send_email_mfa(command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    Ok(Json(MessageResponseDto {
+        message: "MFA code sent.".to_string(),
+    }))
+}
+
+pub async fn verify_email_mfa(
+    State(state): State<AppState>,
+    payload: Result<Json<VerifyEmailMfaCommand>, JsonRejection>,
+) -> Result<Json<AccessTokenResponseDto>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+    let result = state
+        .auth_mfa_use_case
+        .verify_email_mfa(command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    Ok(Json(result.into()))
+}
+
+pub async fn verify_totp_mfa(
+    State(state): State<AppState>,
+    payload: Result<Json<VerifyTotpMfaCommand>, JsonRejection>,
+) -> Result<Json<AccessTokenResponseDto>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+    let result = state
+        .auth_mfa_use_case
+        .verify_totp_mfa(command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    Ok(Json(result.into()))
+}
+
+pub async fn get_mfa_settings(
+    State(state): State<AppState>,
+    AuthenticatedUser(auth): AuthenticatedUser,
+) -> Result<Json<MfaSettingsDto>, ApiError> {
+    let result = state
+        .auth_mfa_use_case
+        .get_mfa_settings(auth)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    Ok(Json(result))
+}
+
+pub async fn setup_totp(
+    State(state): State<AppState>,
+    AuthenticatedUser(auth): AuthenticatedUser,
+    payload: Result<Json<SetupTotpCommand>, JsonRejection>,
+) -> Result<Json<SetupTotpResult>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+    let result = state
+        .auth_mfa_use_case
+        .setup_totp(auth, command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    Ok(Json(result))
+}
+
+pub async fn verify_totp_setup(
+    State(state): State<AppState>,
+    AuthenticatedUser(auth): AuthenticatedUser,
+    payload: Result<Json<VerifyTotpSetupCommand>, JsonRejection>,
+) -> Result<Json<MessageResponseDto>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+    state
+        .auth_mfa_use_case
+        .verify_totp_setup(auth, command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    Ok(Json(MessageResponseDto {
+        message: "TOTP MFA enabled.".to_string(),
+    }))
+}
+
+pub async fn setup_email_mfa(
+    State(state): State<AppState>,
+    AuthenticatedUser(auth): AuthenticatedUser,
+    payload: Result<Json<SetupEmailMfaCommand>, JsonRejection>,
+) -> Result<Json<MessageResponseDto>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+    state
+        .auth_mfa_use_case
+        .setup_email_mfa(auth, command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    Ok(Json(MessageResponseDto {
+        message: "MFA code sent.".to_string(),
+    }))
+}
+
+pub async fn verify_email_mfa_setup(
+    State(state): State<AppState>,
+    AuthenticatedUser(auth): AuthenticatedUser,
+    payload: Result<Json<VerifyEmailMfaSetupCommand>, JsonRejection>,
+) -> Result<Json<MessageResponseDto>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+    state
+        .auth_mfa_use_case
+        .verify_email_mfa_setup(auth, command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    Ok(Json(MessageResponseDto {
+        message: "Email MFA enabled.".to_string(),
+    }))
+}
+
+pub async fn disable_mfa(
+    State(state): State<AppState>,
+    AuthenticatedUser(auth): AuthenticatedUser,
+    payload: Result<Json<DisableMfaCommand>, JsonRejection>,
+) -> Result<Json<MessageResponseDto>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+    state
+        .auth_mfa_use_case
+        .disable_mfa(auth, command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    Ok(Json(MessageResponseDto {
+        message: "MFA disabled.".to_string(),
+    }))
 }
 
 pub async fn resend_verification(
@@ -117,7 +294,7 @@ impl ApiError {
         }
     }
 
-    fn from_auth_error(error: AuthError) -> Self {
+    pub fn from_auth_error(error: AuthError) -> Self {
         match error {
             AuthError::InvalidName => Self::Validation {
                 message: "Validation error".to_string(),
@@ -159,6 +336,58 @@ impl ApiError {
             AuthError::UserNotFound => Self::Message {
                 status: StatusCode::BAD_REQUEST,
                 message: "Verification token invalid.".to_string(),
+            },
+            AuthError::InvalidCredentials => Self::Message {
+                status: StatusCode::UNAUTHORIZED,
+                message: "Invalid email or password.".to_string(),
+            },
+            AuthError::EmailNotVerified => Self::Message {
+                status: StatusCode::FORBIDDEN,
+                message: "Email must be verified before login.".to_string(),
+            },
+            AuthError::UserDisabled => Self::Message {
+                status: StatusCode::FORBIDDEN,
+                message: "User account is disabled.".to_string(),
+            },
+            AuthError::MfaTicketInvalid | AuthError::TotpSetupInvalid => Self::Message {
+                status: StatusCode::BAD_REQUEST,
+                message: "MFA ticket invalid.".to_string(),
+            },
+            AuthError::MfaTicketExpired => Self::Message {
+                status: StatusCode::GONE,
+                message: "MFA ticket expired.".to_string(),
+            },
+            AuthError::MfaCodeInvalid => Self::Message {
+                status: StatusCode::BAD_REQUEST,
+                message: "MFA code invalid.".to_string(),
+            },
+            AuthError::MfaCodeExpired => Self::Message {
+                status: StatusCode::GONE,
+                message: "MFA code expired.".to_string(),
+            },
+            AuthError::MfaCodeAlreadyUsed => Self::Message {
+                status: StatusCode::BAD_REQUEST,
+                message: "MFA code already used.".to_string(),
+            },
+            AuthError::MfaCodeCooldownActive => Self::Message {
+                status: StatusCode::BAD_REQUEST,
+                message: "MFA code was sent recently. Please wait before trying again.".to_string(),
+            },
+            AuthError::CurrentPasswordRequired => Self::Message {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: "Current password is required.".to_string(),
+            },
+            AuthError::CurrentPasswordInvalid => Self::Message {
+                status: StatusCode::UNAUTHORIZED,
+                message: "Current password is invalid.".to_string(),
+            },
+            AuthError::Unauthorized | AuthError::SessionInvalid => Self::Message {
+                status: StatusCode::UNAUTHORIZED,
+                message: "Unauthorized.".to_string(),
+            },
+            AuthError::Forbidden => Self::Message {
+                status: StatusCode::FORBIDDEN,
+                message: "Forbidden.".to_string(),
             },
             AuthError::DependencyFailure(_) => Self::Message {
                 status: StatusCode::INTERNAL_SERVER_ERROR,

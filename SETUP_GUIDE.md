@@ -872,3 +872,24 @@ APP_JWT_EXPIRATION_HOURS=24
 cargo build
 cargo run
 ```
+
+## BidMart Auth 50% Milestone Notes
+
+The backend exposes the milestone auth surface at `/auth/register`, `/auth/resend-verification`, `/auth/verify-email`, `/auth/login`, `/auth/mfa/send-email`, `/auth/mfa/verify-email`, `/auth/mfa/verify-totp`, and the protected `/settings/security/mfa/*` endpoints.
+
+Required auth environment:
+
+```env
+APP_AUTH_JWT_SECRET=replace-with-at-least-32-bytes-of-key-material
+APP_AUTH_MFA_TICKET_TTL_SECONDS=300
+APP_AUTH_EMAIL_MFA_CODE_TTL_SECONDS=300
+APP_AUTH_EMAIL_MFA_COOLDOWN_SECONDS=30
+APP_AUTH_ACCESS_TOKEN_TTL_SECONDS=3600
+APP_AUTH_TOTP_SETUP_TTL_SECONDS=600
+```
+
+`APP_AUTH_JWT_SECRET` must contain at least 32 bytes of raw key material, or standard base64 that decodes to at least 32 bytes. JWT access tokens are HS256 only and require `sub`, `iat`, `exp`, `jti`, `scope`, and `mfa_satisfied` claims. Persisted session lookup by hashed `jti` is required for protected settings routes.
+
+Current-password is the recent-auth contract for this milestone. TOTP setup, email MFA setup, MFA verification setup, and MFA disable requests must include `currentPassword`.
+
+Security residual risk: TOTP uses the standards-based `totp-rs` RFC 6238 implementation, but TOTP secrets are currently stored as plaintext in `users.mfa_totp_secret` and `totp_setups.secret`. Authenticated encryption should be added before production rollout.

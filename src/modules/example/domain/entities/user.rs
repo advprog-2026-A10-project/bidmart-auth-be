@@ -35,6 +35,9 @@ pub struct User {
     pub password_hash: String,
     pub status: UserStatus,
     pub email_verified_at: Option<DateTime<Utc>>,
+    pub mfa_email_enabled: bool,
+    pub mfa_totp_enabled: bool,
+    pub mfa_totp_secret: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -56,6 +59,9 @@ impl User {
             password_hash,
             status: UserStatus::PendingVerification,
             email_verified_at: None,
+            mfa_email_enabled: false,
+            mfa_totp_enabled: false,
+            mfa_totp_secret: None,
             created_at: now,
             updated_at: now,
         }
@@ -72,6 +78,25 @@ impl User {
             }
             _ => self.first_name.clone(),
         }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.status == UserStatus::Active
+    }
+
+    pub fn has_mfa_enabled(&self) -> bool {
+        self.mfa_email_enabled || self.mfa_totp_enabled
+    }
+
+    pub fn mfa_methods(&self) -> Vec<String> {
+        let mut methods = Vec::new();
+        if self.mfa_email_enabled {
+            methods.push("email".to_string());
+        }
+        if self.mfa_totp_enabled {
+            methods.push("totp".to_string());
+        }
+        methods
     }
 }
 

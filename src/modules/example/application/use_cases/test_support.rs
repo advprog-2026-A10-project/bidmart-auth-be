@@ -7,15 +7,21 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
+use crate::modules::auth::application::dto::{AuthenticatedUserContext, IssuedAccessToken};
+use crate::modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
 use crate::modules::auth::application::use_cases::policy::AuthPolicy;
 use crate::modules::auth::application::use_cases::register_user_use_case::RegisterUserUseCase;
 use crate::modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
 use crate::modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
-use crate::modules::auth::domain::entities::{EmailVerificationToken, User, UserStatus};
+use crate::modules::auth::domain::entities::{
+    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, TotpSetup, User, UserStatus,
+};
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
-    Clock, EmailVerificationTokenRepository, PasswordHasher, UserRepository,
-    VerificationEmailSender, VerificationTokenGenerator, VerificationTokenHasher,
+    Clock, EmailMfaCodeRepository, EmailVerificationTokenRepository, JwtService, MfaEmailSender,
+    MfaTicketRepository, PasswordHasher, PasswordVerifier, SessionRepository, TotpService,
+    TotpSetupRepository, UserRepository, VerificationEmailSender, VerificationTokenGenerator,
+    VerificationTokenHasher,
 };
 
 pub fn fixed_now() -> DateTime<Utc> {
@@ -44,6 +50,39 @@ pub fn sample_token(
         id: Uuid::new_v4(),
         user_id,
         token_hash: token_hash.to_string(),
+        created_at,
+        expires_at,
+        consumed_at: None,
+        invalidated_at: None,
+    }
+}
+
+pub fn sample_mfa_ticket(
+    user_id: Uuid,
+    ticket_hash: &str,
+    created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+) -> MfaTicket {
+    MfaTicket {
+        id: Uuid::new_v4(),
+        user_id,
+        ticket_hash: ticket_hash.to_string(),
+        created_at,
+        expires_at,
+        consumed_at: None,
+    }
+}
+
+pub fn sample_email_mfa_code(
+    user_id: Uuid,
+    code_hash: &str,
+    created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+) -> EmailMfaCode {
+    EmailMfaCode {
+        id: Uuid::new_v4(),
+        user_id,
+        code_hash: code_hash.to_string(),
         created_at,
         expires_at,
         consumed_at: None,
@@ -168,6 +207,68 @@ impl UserRepository for FakeUserRepository {
         }
 
         Ok(())
+    }
+
+    async fn update_mfa_email_enabled(
+        &self,
+        user_id: Uuid,
+        enabled: bool,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        let mut updated_user: Option<User> = None;
+        if let Some(user) = state.users_by_id.get_mut(&user_id) {
+            user.mfa_email_enabled = enabled;
+            user.updated_at = updated_at;
+            updated_user = Some(user.clone());
+        }
+        if let Some(user) = updated_user {
+            state.users_by_email.insert(user.email.clone(), user);
+            Ok(())
+        } else {
+            Err(AuthError::UserNotFound)
+        }
+    }
+
+    async fn update_mfa_totp(
+        &self,
+        user_id: Uuid,
+        enabled: bool,
+        secret: Option<String>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        let mut updated_user: Option<User> = None;
+        if let Some(user) = state.users_by_id.get_mut(&user_id) {
+            user.mfa_totp_enabled = enabled;
+            user.mfa_totp_secret = secret;
+            user.updated_at = updated_at;
+            updated_user = Some(user.clone());
+        }
+        if let Some(user) = updated_user {
+            state.users_by_email.insert(user.email.clone(), user);
+            Ok(())
+        } else {
+            Err(AuthError::UserNotFound)
+        }
+    }
+
+    async fn disable_mfa(&self, user_id: Uuid, updated_at: DateTime<Utc>) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        let mut updated_user: Option<User> = None;
+        if let Some(user) = state.users_by_id.get_mut(&user_id) {
+            user.mfa_email_enabled = false;
+            user.mfa_totp_enabled = false;
+            user.mfa_totp_secret = None;
+            user.updated_at = updated_at;
+            updated_user = Some(user.clone());
+        }
+        if let Some(user) = updated_user {
+            state.users_by_email.insert(user.email.clone(), user);
+            Ok(())
+        } else {
+            Err(AuthError::UserNotFound)
+        }
     }
 }
 
@@ -348,6 +449,63 @@ impl PasswordHasher for FakePasswordHasher {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct FakePasswordVerifierState {
+    pub decisions: HashMap<(String, String), bool>,
+    pub verify_calls: Vec<(String, String)>,
+}
+
+#[derive(Debug, Default)]
+pub struct FakePasswordVerifier {
+    pub state: Mutex<FakePasswordVerifierState>,
+    pub verify_error: Mutex<Option<AuthError>>,
+}
+
+impl FakePasswordVerifier {
+    pub fn accept(&self, raw_password: &str, password_hash: &str) {
+        self.state
+            .lock()
+            .expect("state lock poisoned")
+            .decisions
+            .insert((raw_password.to_string(), password_hash.to_string()), true);
+    }
+
+    pub fn reject(&self, raw_password: &str, password_hash: &str) {
+        self.state
+            .lock()
+            .expect("state lock poisoned")
+            .decisions
+            .insert((raw_password.to_string(), password_hash.to_string()), false);
+    }
+
+    pub fn snapshot(&self) -> FakePasswordVerifierState {
+        self.state.lock().expect("state lock poisoned").clone()
+    }
+}
+
+impl PasswordVerifier for FakePasswordVerifier {
+    fn verify(&self, raw_password: &str, password_hash: &str) -> Result<bool, AuthError> {
+        if let Some(err) = self
+            .verify_error
+            .lock()
+            .expect("error lock poisoned")
+            .clone()
+        {
+            return Err(err);
+        }
+
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state
+            .verify_calls
+            .push((raw_password.to_string(), password_hash.to_string()));
+        Ok(state
+            .decisions
+            .get(&(raw_password.to_string(), password_hash.to_string()))
+            .copied()
+            .unwrap_or(false))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct FakeTokenGeneratorState {
     pub queued_tokens: VecDeque<String>,
     pub generated_tokens: Vec<String>,
@@ -467,6 +625,375 @@ impl VerificationEmailSender for FakeEmailSender {
     }
 }
 
+#[async_trait]
+impl MfaEmailSender for FakeEmailSender {
+    async fn send_mfa_code(&self, to_email: &str, raw_code: &str) -> Result<(), AuthError> {
+        if let Some(err) = self.send_error.lock().expect("error lock poisoned").clone() {
+            return Err(err);
+        }
+
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state
+            .sent_messages
+            .push((to_email.to_string(), raw_code.to_string()));
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FakeMfaTicketRepositoryState {
+    pub tickets_by_hash: HashMap<String, MfaTicket>,
+    pub saved_tickets: Vec<MfaTicket>,
+    pub consume_calls: Vec<(Uuid, DateTime<Utc>)>,
+}
+
+#[derive(Debug, Default)]
+pub struct FakeMfaTicketRepository {
+    pub state: Mutex<FakeMfaTicketRepositoryState>,
+}
+
+impl FakeMfaTicketRepository {
+    pub fn snapshot(&self) -> FakeMfaTicketRepositoryState {
+        self.state.lock().expect("state lock poisoned").clone()
+    }
+
+    pub fn insert_ticket(&self, ticket: MfaTicket) {
+        self.state
+            .lock()
+            .expect("state lock poisoned")
+            .tickets_by_hash
+            .insert(ticket.ticket_hash.clone(), ticket);
+    }
+}
+
+#[async_trait]
+impl MfaTicketRepository for FakeMfaTicketRepository {
+    async fn save(&self, ticket: MfaTicket) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.saved_tickets.push(ticket.clone());
+        state
+            .tickets_by_hash
+            .insert(ticket.ticket_hash.clone(), ticket);
+        Ok(())
+    }
+
+    async fn find_by_ticket_hash(&self, ticket_hash: &str) -> Result<Option<MfaTicket>, AuthError> {
+        let state = self.state.lock().expect("state lock poisoned");
+        Ok(state.tickets_by_hash.get(ticket_hash).cloned())
+    }
+
+    async fn consume(
+        &self,
+        ticket_id: Uuid,
+        consumed_at: DateTime<Utc>,
+    ) -> Result<bool, AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.consume_calls.push((ticket_id, consumed_at));
+        for ticket in state.tickets_by_hash.values_mut() {
+            if ticket.id == ticket_id && ticket.consumed_at.is_none() {
+                ticket.consumed_at = Some(consumed_at);
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FakeEmailMfaCodeRepositoryState {
+    pub codes_by_hash: HashMap<String, EmailMfaCode>,
+    pub saved_codes: Vec<EmailMfaCode>,
+    pub consume_calls: Vec<(Uuid, DateTime<Utc>)>,
+    pub invalidate_calls: Vec<(Uuid, DateTime<Utc>)>,
+}
+
+#[derive(Debug, Default)]
+pub struct FakeEmailMfaCodeRepository {
+    pub state: Mutex<FakeEmailMfaCodeRepositoryState>,
+}
+
+impl FakeEmailMfaCodeRepository {
+    pub fn snapshot(&self) -> FakeEmailMfaCodeRepositoryState {
+        self.state.lock().expect("state lock poisoned").clone()
+    }
+
+    pub fn insert_code(&self, code: EmailMfaCode) {
+        self.state
+            .lock()
+            .expect("state lock poisoned")
+            .codes_by_hash
+            .insert(code.code_hash.clone(), code);
+    }
+}
+
+#[async_trait]
+impl EmailMfaCodeRepository for FakeEmailMfaCodeRepository {
+    async fn save(&self, code: EmailMfaCode) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.saved_codes.push(code.clone());
+        state.codes_by_hash.insert(code.code_hash.clone(), code);
+        Ok(())
+    }
+
+    async fn find_by_code_hash(&self, code_hash: &str) -> Result<Option<EmailMfaCode>, AuthError> {
+        let state = self.state.lock().expect("state lock poisoned");
+        Ok(state.codes_by_hash.get(code_hash).cloned())
+    }
+
+    async fn find_latest_active_by_user_id(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<EmailMfaCode>, AuthError> {
+        let state = self.state.lock().expect("state lock poisoned");
+        Ok(state
+            .codes_by_hash
+            .values()
+            .filter(|code| {
+                code.user_id == user_id
+                    && code.consumed_at.is_none()
+                    && code.invalidated_at.is_none()
+            })
+            .max_by_key(|code| code.created_at.timestamp_millis())
+            .cloned())
+    }
+
+    async fn consume(&self, code_id: Uuid, consumed_at: DateTime<Utc>) -> Result<bool, AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.consume_calls.push((code_id, consumed_at));
+        for code in state.codes_by_hash.values_mut() {
+            if code.id == code_id && code.consumed_at.is_none() && code.invalidated_at.is_none() {
+                code.consumed_at = Some(consumed_at);
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn invalidate_active_codes_for_user(
+        &self,
+        user_id: Uuid,
+        invalidated_at: DateTime<Utc>,
+    ) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.invalidate_calls.push((user_id, invalidated_at));
+        for code in state.codes_by_hash.values_mut() {
+            if code.user_id == user_id
+                && code.consumed_at.is_none()
+                && code.invalidated_at.is_none()
+            {
+                code.invalidated_at = Some(invalidated_at);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FakeSessionRepositoryState {
+    pub sessions_by_hash: HashMap<String, AuthSession>,
+    pub saved_sessions: Vec<AuthSession>,
+}
+
+#[derive(Debug, Default)]
+pub struct FakeSessionRepository {
+    pub state: Mutex<FakeSessionRepositoryState>,
+}
+
+impl FakeSessionRepository {
+    pub fn snapshot(&self) -> FakeSessionRepositoryState {
+        self.state.lock().expect("state lock poisoned").clone()
+    }
+}
+
+#[async_trait]
+impl SessionRepository for FakeSessionRepository {
+    async fn save(&self, session: AuthSession) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.saved_sessions.push(session.clone());
+        state
+            .sessions_by_hash
+            .insert(session.jti_hash.clone(), session);
+        Ok(())
+    }
+
+    async fn find_active_by_jti_hash(
+        &self,
+        jti_hash: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Option<AuthSession>, AuthError> {
+        let state = self.state.lock().expect("state lock poisoned");
+        Ok(state
+            .sessions_by_hash
+            .get(jti_hash)
+            .filter(|session| session.expires_at > now)
+            .cloned())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FakeTotpSetupRepositoryState {
+    pub setups_by_hash: HashMap<String, TotpSetup>,
+    pub saved_setups: Vec<TotpSetup>,
+}
+
+#[derive(Debug, Default)]
+pub struct FakeTotpSetupRepository {
+    pub state: Mutex<FakeTotpSetupRepositoryState>,
+}
+
+impl FakeTotpSetupRepository {
+    pub fn snapshot(&self) -> FakeTotpSetupRepositoryState {
+        self.state.lock().expect("state lock poisoned").clone()
+    }
+}
+
+#[async_trait]
+impl TotpSetupRepository for FakeTotpSetupRepository {
+    async fn save(&self, setup: TotpSetup) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.saved_setups.push(setup.clone());
+        state
+            .setups_by_hash
+            .insert(setup.setup_ticket_hash.clone(), setup);
+        Ok(())
+    }
+
+    async fn find_by_ticket_hash(&self, ticket_hash: &str) -> Result<Option<TotpSetup>, AuthError> {
+        let state = self.state.lock().expect("state lock poisoned");
+        Ok(state.setups_by_hash.get(ticket_hash).cloned())
+    }
+
+    async fn consume(&self, setup_id: Uuid, consumed_at: DateTime<Utc>) -> Result<bool, AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        for setup in state.setups_by_hash.values_mut() {
+            if setup.id == setup_id && setup.consumed_at.is_none() {
+                setup.consumed_at = Some(consumed_at);
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FakeJwtIssuerState {
+    pub queued_access_tokens: VecDeque<(String, String)>,
+    pub issued_access_tokens: Vec<(Uuid, bool)>,
+}
+
+#[derive(Debug, Default)]
+pub struct FakeJwtIssuer {
+    pub state: Mutex<FakeJwtIssuerState>,
+}
+
+impl FakeJwtIssuer {
+    pub fn queue_access_token(&self, token: String, jti: String) {
+        self.state
+            .lock()
+            .expect("state lock poisoned")
+            .queued_access_tokens
+            .push_back((token, jti));
+    }
+
+    pub fn snapshot(&self) -> FakeJwtIssuerState {
+        self.state.lock().expect("state lock poisoned").clone()
+    }
+}
+
+impl JwtService for FakeJwtIssuer {
+    fn issue_access_token(
+        &self,
+        user_id: Uuid,
+        mfa_satisfied: bool,
+        now: DateTime<Utc>,
+    ) -> Result<IssuedAccessToken, AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.issued_access_tokens.push((user_id, mfa_satisfied));
+        let (token, jti) = state.queued_access_tokens.pop_front().unwrap_or_else(|| {
+            (
+                "access.jwt".to_string(),
+                format!("jti-{}", state.issued_access_tokens.len()),
+            )
+        });
+        Ok(IssuedAccessToken {
+            token,
+            jti,
+            expires_at: now + Duration::hours(1),
+        })
+    }
+
+    fn verify_access_token(
+        &self,
+        token: &str,
+        _now: DateTime<Utc>,
+    ) -> Result<AuthenticatedUserContext, AuthError> {
+        let mut parts = token.split(':');
+        let user_id = parts
+            .next()
+            .and_then(|value| Uuid::parse_str(value).ok())
+            .ok_or(AuthError::Unauthorized)?;
+        let mfa_satisfied = parts.next().map(|value| value == "mfa").unwrap_or(true);
+        Ok(AuthenticatedUserContext {
+            user_id,
+            mfa_satisfied,
+            session_jti_hash: Some(FakeTokenHasher::deterministic_hash(token)),
+        })
+    }
+
+    fn jti_hash(&self, jti: &str) -> Result<String, AuthError> {
+        Ok(FakeTokenHasher::deterministic_hash(jti))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FakeTotpServiceState {
+    pub accepted: HashMap<(String, String, i64), bool>,
+    pub queued_secrets: VecDeque<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct FakeTotpService {
+    pub state: Mutex<FakeTotpServiceState>,
+}
+
+impl FakeTotpService {
+    pub fn accept(&self, secret: &str, code: &str, now: DateTime<Utc>) {
+        self.state
+            .lock()
+            .expect("state lock poisoned")
+            .accepted
+            .insert(
+                (secret.to_string(), code.to_string(), now.timestamp()),
+                true,
+            );
+    }
+}
+
+impl TotpService for FakeTotpService {
+    fn generate_secret(&self) -> Result<String, AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        Ok(state
+            .queued_secrets
+            .pop_front()
+            .unwrap_or_else(|| "generated-totp-secret".to_string()))
+    }
+
+    fn otpauth_url(&self, email: &str, secret: &str) -> Result<String, AuthError> {
+        Ok(format!(
+            "otpauth://totp/BidMart:{email}?secret={secret}&issuer=BidMart"
+        ))
+    }
+
+    fn verify_code(&self, secret: &str, code: &str, now: DateTime<Utc>) -> Result<bool, AuthError> {
+        let state = self.state.lock().expect("state lock poisoned");
+        Ok(state
+            .accepted
+            .get(&(secret.to_string(), code.to_string(), now.timestamp()))
+            .copied()
+            .unwrap_or(false))
+    }
+}
+
 #[derive(Debug)]
 pub struct FixedClock {
     current: Mutex<DateTime<Utc>>,
@@ -579,5 +1106,91 @@ pub fn short_cooldown_policy() -> AuthPolicy {
         min_password_length: 8,
         verification_token_ttl: Duration::seconds(30),
         resend_cooldown: Duration::seconds(30),
+        ..AuthPolicy::default()
+    }
+}
+
+pub struct AuthUseCaseTestContext {
+    pub user_repository: Arc<FakeUserRepository>,
+    pub password_verifier: Arc<FakePasswordVerifier>,
+    pub token_generator: Arc<FakeTokenGenerator>,
+    pub token_hasher: Arc<FakeTokenHasher>,
+    pub email_sender: Arc<FakeEmailSender>,
+    pub mfa_ticket_repository: Arc<FakeMfaTicketRepository>,
+    pub email_mfa_code_repository: Arc<FakeEmailMfaCodeRepository>,
+    pub session_repository: Arc<FakeSessionRepository>,
+    pub totp_setup_repository: Arc<FakeTotpSetupRepository>,
+    pub jwt_issuer: Arc<FakeJwtIssuer>,
+    pub totp_service: Arc<FakeTotpService>,
+    pub clock: Arc<FixedClock>,
+    pub policy: AuthPolicy,
+}
+
+impl AuthUseCaseTestContext {
+    pub fn new(now: DateTime<Utc>) -> Self {
+        Self {
+            user_repository: Arc::new(FakeUserRepository::default()),
+            password_verifier: Arc::new(FakePasswordVerifier::default()),
+            token_generator: Arc::new(FakeTokenGenerator::default()),
+            token_hasher: Arc::new(FakeTokenHasher::default()),
+            email_sender: Arc::new(FakeEmailSender::default()),
+            mfa_ticket_repository: Arc::new(FakeMfaTicketRepository::default()),
+            email_mfa_code_repository: Arc::new(FakeEmailMfaCodeRepository::default()),
+            session_repository: Arc::new(FakeSessionRepository::default()),
+            totp_setup_repository: Arc::new(FakeTotpSetupRepository::default()),
+            jwt_issuer: Arc::new(FakeJwtIssuer::default()),
+            totp_service: Arc::new(FakeTotpService::default()),
+            clock: Arc::new(FixedClock::new(now)),
+            policy: AuthPolicy::default(),
+        }
+    }
+
+    pub fn auth_mfa_use_case(&self) -> AuthMfaUseCase {
+        AuthMfaUseCase::new(
+            self.user_repository.clone(),
+            self.mfa_ticket_repository.clone(),
+            self.email_mfa_code_repository.clone(),
+            self.session_repository.clone(),
+            self.totp_setup_repository.clone(),
+            self.password_verifier.clone(),
+            self.token_generator.clone(),
+            self.token_hasher.clone(),
+            self.email_sender.clone(),
+            self.jwt_issuer.clone(),
+            self.totp_service.clone(),
+            self.clock.clone(),
+            self.policy.clone(),
+        )
+    }
+
+    pub fn seed_mfa_ticket(
+        &self,
+        user_id: Uuid,
+        raw_ticket: &str,
+        expires_at: DateTime<Utc>,
+    ) -> MfaTicket {
+        let ticket_hash = FakeTokenHasher::deterministic_hash(raw_ticket);
+        let ticket = sample_mfa_ticket(user_id, &ticket_hash, self.clock.now(), expires_at);
+        self.mfa_ticket_repository.insert_ticket(ticket.clone());
+        ticket
+    }
+
+    pub fn seed_email_mfa_code(
+        &self,
+        user_id: Uuid,
+        raw_code: &str,
+        created_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> EmailMfaCode {
+        let code_hash = FakeTokenHasher::deterministic_hash(raw_code);
+        let code = sample_email_mfa_code(user_id, &code_hash, created_at, expires_at);
+        self.email_mfa_code_repository.insert_code(code.clone());
+        code
+    }
+}
+
+impl Default for AuthUseCaseTestContext {
+    fn default() -> Self {
+        Self::new(fixed_now())
     }
 }
