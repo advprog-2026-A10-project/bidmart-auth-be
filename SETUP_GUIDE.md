@@ -862,8 +862,17 @@ Create `.env` file:
 APP_SERVER_HOST=0.0.0.0
 APP_SERVER_PORT=8080
 APP_DATABASE_URL=postgres://postgres:password@localhost:5432/bidmart
-APP_JWT_SECRET=your-secret-key-change-in-production
-APP_JWT_EXPIRATION_HOURS=24
+APP_AUTH_JWT_SECRET=replace-with-at-least-32-bytes-of-key-material
+APP_AUTH_ACCESS_TOKEN_TTL_SECONDS=3600
+APP_AUTH_MFA_TICKET_TTL_SECONDS=300
+APP_AUTH_EMAIL_MFA_CODE_TTL_SECONDS=300
+APP_AUTH_EMAIL_MFA_COOLDOWN_SECONDS=30
+APP_AUTH_TOTP_SETUP_TTL_SECONDS=600
+APP_RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxx
+APP_RESEND_FROM_EMAIL=BidMart <noreply@bidmart.bid>
+APP_VERIFY_EMAIL_URL_BASE=http://localhost:5173/auth/verify-email?token=
+APP_PASSWORD_RESET_URL_BASE=http://localhost:5173/reset-password?token=
+APP_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 ### Step 12: Build and Run
@@ -886,6 +895,11 @@ APP_AUTH_EMAIL_MFA_CODE_TTL_SECONDS=300
 APP_AUTH_EMAIL_MFA_COOLDOWN_SECONDS=30
 APP_AUTH_ACCESS_TOKEN_TTL_SECONDS=3600
 APP_AUTH_TOTP_SETUP_TTL_SECONDS=600
+APP_RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxx
+APP_RESEND_FROM_EMAIL=BidMart <noreply@bidmart.bid>
+APP_VERIFY_EMAIL_URL_BASE=http://localhost:5173/auth/verify-email?token=
+APP_PASSWORD_RESET_URL_BASE=http://localhost:5173/reset-password?token=
+APP_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 `APP_AUTH_JWT_SECRET` must contain at least 32 bytes of raw key material, or standard base64 that decodes to at least 32 bytes. JWT access tokens are HS256 only and require `sub`, `iat`, `exp`, `jti`, `scope`, and `mfa_satisfied` claims. Persisted session lookup by hashed `jti` is required for protected settings routes.

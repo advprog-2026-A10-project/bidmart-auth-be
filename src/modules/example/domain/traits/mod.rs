@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use crate::modules::auth::application::dto::{AuthenticatedUserContext, IssuedAccessToken};
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, TotpSetup, User,
+    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, PasswordResetToken, TotpSetup,
+    User,
 };
 use crate::modules::auth::domain::errors::AuthError;
 
@@ -81,6 +82,44 @@ pub trait VerificationEmailSender: Send + Sync {
 #[async_trait]
 pub trait MfaEmailSender: Send + Sync {
     async fn send_mfa_code(&self, to_email: &str, raw_code: &str) -> Result<(), AuthError>;
+}
+
+#[async_trait]
+pub trait PasswordResetEmailSender: Send + Sync {
+    async fn send_password_reset_email(
+        &self,
+        to_email: &str,
+        raw_token: &str,
+    ) -> Result<(), AuthError>;
+}
+
+#[async_trait]
+pub trait PasswordResetTokenRepository: Send + Sync {
+    async fn save(&self, token: PasswordResetToken) -> Result<(), AuthError>;
+    async fn find_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<PasswordResetToken>, AuthError>;
+    async fn find_latest_active_by_user_id(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<PasswordResetToken>, AuthError>;
+    async fn invalidate_active_tokens_for_user(
+        &self,
+        user_id: Uuid,
+        invalidated_at: DateTime<Utc>,
+    ) -> Result<(), AuthError>;
+}
+
+#[async_trait]
+pub trait PasswordResetCompletionRepository: Send + Sync {
+    async fn complete_password_reset(
+        &self,
+        token_id: Uuid,
+        user_id: Uuid,
+        password_hash: String,
+        completed_at: DateTime<Utc>,
+    ) -> Result<bool, AuthError>;
 }
 
 #[async_trait]

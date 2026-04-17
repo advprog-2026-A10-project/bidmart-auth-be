@@ -9,11 +9,11 @@ use serde::Serialize;
 use validator::{Validate, ValidationErrors};
 
 use crate::modules::auth::application::dto::{
-    AccessTokenResponseDto, DisableMfaCommand, LoginCommand, LoginResponseDto, MessageResponseDto,
-    MfaSettingsDto, RegisterResponseDto, RegisterUserCommand, ResendVerificationCommand,
-    SendEmailMfaCommand, SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult,
-    VerifyEmailCommand, VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand,
-    VerifyTotpSetupCommand,
+    AccessTokenResponseDto, DisableMfaCommand, ForgotPasswordCommand, LoginCommand,
+    LoginResponseDto, MessageResponseDto, MfaSettingsDto, RegisterResponseDto, RegisterUserCommand,
+    ResendVerificationCommand, ResetPasswordCommand, SendEmailMfaCommand, SetupEmailMfaCommand,
+    SetupTotpCommand, SetupTotpResult, VerifyEmailCommand, VerifyEmailMfaCommand,
+    VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand, VerifyTotpSetupCommand,
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::infrastructure::auth_extractor::AuthenticatedUser;
@@ -253,6 +253,42 @@ pub async fn resend_verification(
     Ok(Json(result.into()))
 }
 
+pub async fn forgot_password(
+    State(state): State<AppState>,
+    payload: Result<Json<ForgotPasswordCommand>, JsonRejection>,
+) -> Result<Json<MessageResponseDto>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+
+    let result = state
+        .forgot_password_use_case
+        .execute(command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+
+    Ok(Json(result.into()))
+}
+
+pub async fn reset_password(
+    State(state): State<AppState>,
+    payload: Result<Json<ResetPasswordCommand>, JsonRejection>,
+) -> Result<Json<MessageResponseDto>, ApiError> {
+    let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
+    command
+        .validate()
+        .map_err(ApiError::from_validation_errors)?;
+
+    let result = state
+        .reset_password_use_case
+        .execute(command)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+
+    Ok(Json(result.into()))
+}
+
 pub enum ApiError {
     Validation {
         message: String,
@@ -328,6 +364,18 @@ impl ApiError {
                 status: StatusCode::BAD_REQUEST,
                 message: "Verification email was sent recently. Please wait before trying again."
                     .to_string(),
+            },
+            AuthError::PasswordResetTokenExpired => Self::Message {
+                status: StatusCode::GONE,
+                message: "Password reset token expired.".to_string(),
+            },
+            AuthError::PasswordResetTokenInvalid => Self::Message {
+                status: StatusCode::BAD_REQUEST,
+                message: "Password reset token invalid.".to_string(),
+            },
+            AuthError::PasswordResetTokenAlreadyUsed => Self::Message {
+                status: StatusCode::BAD_REQUEST,
+                message: "Password reset token already used.".to_string(),
             },
             AuthError::UserAlreadyVerified => Self::Message {
                 status: StatusCode::BAD_REQUEST,

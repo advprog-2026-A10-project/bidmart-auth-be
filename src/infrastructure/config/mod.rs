@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub auth_min_password_length: usize,
     pub auth_verification_token_ttl_seconds: i64,
     pub auth_resend_cooldown_seconds: i64,
+    pub auth_password_reset_token_ttl_seconds: i64,
+    pub auth_password_reset_cooldown_seconds: i64,
     pub auth_mfa_ticket_ttl_seconds: i64,
     pub auth_email_mfa_code_ttl_seconds: i64,
     pub auth_email_mfa_cooldown_seconds: i64,
@@ -20,6 +22,8 @@ pub struct AppConfig {
     pub resend_api_key: String,
     pub resend_from_email: String,
     pub verify_email_url_base: String,
+    pub password_reset_url_base: String,
+    pub cors_allowed_origins: Vec<String>,
 }
 
 impl AppConfig {
@@ -55,6 +59,14 @@ impl AppConfig {
                 "APP_AUTH_RESEND_COOLDOWN_SECONDS",
                 30,
             )?,
+            auth_password_reset_token_ttl_seconds: optional_parsed_env(
+                "APP_AUTH_PASSWORD_RESET_TOKEN_TTL_SECONDS",
+                900,
+            )?,
+            auth_password_reset_cooldown_seconds: optional_parsed_env(
+                "APP_AUTH_PASSWORD_RESET_COOLDOWN_SECONDS",
+                30,
+            )?,
             auth_mfa_ticket_ttl_seconds: optional_parsed_env(
                 "APP_AUTH_MFA_TICKET_TTL_SECONDS",
                 300,
@@ -78,9 +90,17 @@ impl AppConfig {
             auth_jwt_secret: required_jwt_secret("APP_AUTH_JWT_SECRET")?,
             resend_api_key: required_env("APP_RESEND_API_KEY")?,
             resend_from_email: required_env("APP_RESEND_FROM_EMAIL")?,
-            verify_email_url_base: required_env("APP_VERIFY_EMAIL_URL_BASE")?,
+            verify_email_url_base: required_url_base("APP_VERIFY_EMAIL_URL_BASE")?,
+            password_reset_url_base: required_url_base("APP_PASSWORD_RESET_URL_BASE")?,
+            cors_allowed_origins: cors_allowed_origins("APP_CORS_ALLOWED_ORIGINS")?,
         })
     }
+}
+
+fn required_url_base(key: &str) -> Result<String, ConfigError> {
+    let value = required_env(key)?;
+    validate_absolute_http_url_base(key, &value)?;
+    Ok(value)
 }
 
 fn required_jwt_secret(key: &str) -> Result<String, ConfigError> {
@@ -120,5 +140,138 @@ where
             .map_err(|_| ConfigError::Message(format!("Invalid {key}"))),
         Err(std::env::VarError::NotPresent) => Ok(default),
         Err(_) => Err(ConfigError::Message(format!("Invalid {key}"))),
+    }
+}
+
+fn validate_absolute_http_url_base(key: &str, value: &str) -> Result<(), ConfigError> {
+    let rest = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+        .ok_or_else(|| {
+            ConfigError::Message(format!("Invalid {key}: must be an absolute http(s) URL"))
+        })?;
+
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if host.is_empty() || host.contains('@') {
+        return Err(ConfigError::Message(format!(
+            "Invalid {key}: must include a host"
+        )));
+    }
+
+    Ok(())
+}
+
+fn cors_allowed_origins(key: &str) -> Result<Vec<String>, ConfigError> {
+    let value = std::env::var(key)
+        .unwrap_or_else(|_| "http://localhost:5173,http://127.0.0.1:5173".to_string());
+    parse_cors_allowed_origins_value(key, &value)
+}
+
+fn parse_cors_allowed_origins_value(key: &str, value: &str) -> Result<Vec<String>, ConfigError> {
+    let origins = value
+        .split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+        .map(|origin| validate_cors_origin(key, origin).map(|()| origin.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if origins.is_empty() {
+        return Err(ConfigError::Message(format!(
+            "Invalid {key}: configure at least one origin"
+        )));
+    }
+
+    Ok(origins)
+}
+
+fn validate_cors_origin(key: &str, value: &str) -> Result<(), ConfigError> {
+    let rest = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+        .ok_or_else(|| {
+            ConfigError::Message(format!(
+                "Invalid {key}: origins must be absolute http(s) URLs"
+            ))
+        })?;
+
+    if rest.is_empty()
+        || rest.contains('@')
+        || rest.contains('/')
+        || rest.contains('?')
+        || rest.contains('#')
+    {
+        return Err(ConfigError::Message(format!(
+            "Invalid {key}: origins must not include paths, queries, fragments, or credentials"
+        )));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        parse_cors_allowed_origins_value, validate_absolute_http_url_base, validate_cors_origin,
+    };
+
+    #[test]
+    fn absolute_http_url_base_validation_accepts_http_and_https() {
+        assert!(validate_absolute_http_url_base(
+            "APP_VERIFY_EMAIL_URL_BASE",
+            "https://sso.bidmart.com/verify-email?token="
+        )
+        .is_ok());
+        assert!(validate_absolute_http_url_base(
+            "APP_PASSWORD_RESET_URL_BASE",
+            "http://localhost:5173/reset-password?token="
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn absolute_http_url_base_validation_rejects_relative_or_non_http_urls() {
+        assert!(validate_absolute_http_url_base(
+            "APP_VERIFY_EMAIL_URL_BASE",
+            "/verify-email?token="
+        )
+        .is_err());
+        assert!(validate_absolute_http_url_base(
+            "APP_PASSWORD_RESET_URL_BASE",
+            "javascript:alert(1)"
+        )
+        .is_err());
+        assert!(validate_absolute_http_url_base(
+            "APP_PASSWORD_RESET_URL_BASE",
+            "https:///missing-host"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn cors_origin_validation_accepts_origin_list_without_paths() {
+        let origins = parse_cors_allowed_origins_value(
+            "APP_CORS_ALLOWED_ORIGINS",
+            "https://bidmart.example,http://localhost:5173",
+        )
+        .expect("valid origins");
+        assert_eq!(
+            origins,
+            vec![
+                "https://bidmart.example".to_string(),
+                "http://localhost:5173".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn cors_origin_validation_rejects_paths_and_credentials() {
+        assert!(
+            validate_cors_origin("APP_CORS_ALLOWED_ORIGINS", "https://bidmart.example/app")
+                .is_err()
+        );
+        assert!(
+            validate_cors_origin("APP_CORS_ALLOWED_ORIGINS", "https://user@bidmart.example")
+                .is_err()
+        );
     }
 }

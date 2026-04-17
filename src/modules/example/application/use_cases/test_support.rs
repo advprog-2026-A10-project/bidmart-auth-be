@@ -9,19 +9,24 @@ use uuid::Uuid;
 
 use crate::modules::auth::application::dto::{AuthenticatedUserContext, IssuedAccessToken};
 use crate::modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
+use crate::modules::auth::application::use_cases::password_reset_use_case::{
+    ForgotPasswordUseCase, ResetPasswordUseCase,
+};
 use crate::modules::auth::application::use_cases::policy::AuthPolicy;
 use crate::modules::auth::application::use_cases::register_user_use_case::RegisterUserUseCase;
 use crate::modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
 use crate::modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, TotpSetup, User, UserStatus,
+    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, PasswordResetToken, TotpSetup,
+    User, UserStatus,
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
     Clock, EmailMfaCodeRepository, EmailVerificationTokenRepository, JwtService, MfaEmailSender,
-    MfaTicketRepository, PasswordHasher, PasswordVerifier, SessionRepository, TotpService,
-    TotpSetupRepository, UserRepository, VerificationEmailSender, VerificationTokenGenerator,
-    VerificationTokenHasher,
+    MfaTicketRepository, PasswordHasher, PasswordResetCompletionRepository,
+    PasswordResetEmailSender, PasswordResetTokenRepository, PasswordVerifier, SessionRepository,
+    TotpService, TotpSetupRepository, UserRepository, VerificationEmailSender,
+    VerificationTokenGenerator, VerificationTokenHasher,
 };
 
 pub fn fixed_now() -> DateTime<Utc> {
@@ -90,6 +95,23 @@ pub fn sample_email_mfa_code(
     }
 }
 
+pub fn sample_password_reset_token(
+    user_id: Uuid,
+    token_hash: &str,
+    created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+) -> PasswordResetToken {
+    PasswordResetToken {
+        id: Uuid::new_v4(),
+        user_id,
+        token_hash: token_hash.to_string(),
+        created_at,
+        expires_at,
+        consumed_at: None,
+        invalidated_at: None,
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct FakeUserRepositoryState {
     pub users_by_email: HashMap<String, User>,
@@ -97,6 +119,7 @@ pub struct FakeUserRepositoryState {
     pub find_by_email_inputs: Vec<String>,
     pub created_users: Vec<User>,
     pub mark_email_verified_calls: Vec<(Uuid, DateTime<Utc>)>,
+    pub update_password_hash_calls: Vec<(Uuid, String, DateTime<Utc>)>,
 }
 
 #[derive(Debug, Default)]
@@ -106,6 +129,7 @@ pub struct FakeUserRepository {
     pub create_error: Mutex<Option<AuthError>>,
     pub find_by_id_error: Mutex<Option<AuthError>>,
     pub mark_verified_error: Mutex<Option<AuthError>>,
+    pub update_password_hash_error: Mutex<Option<AuthError>>,
 }
 
 impl FakeUserRepository {
@@ -420,6 +444,217 @@ impl EmailVerificationTokenRepository for FakeTokenRepository {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct FakePasswordResetTokenRepositoryState {
+    pub tokens_by_hash: HashMap<String, PasswordResetToken>,
+    pub saved_tokens: Vec<PasswordResetToken>,
+    pub find_by_hash_inputs: Vec<String>,
+    pub find_latest_inputs: Vec<Uuid>,
+    pub consume_calls: Vec<(Uuid, DateTime<Utc>)>,
+    pub invalidate_calls: Vec<(Uuid, DateTime<Utc>)>,
+}
+
+#[derive(Debug, Default)]
+pub struct FakePasswordResetTokenRepository {
+    pub state: Mutex<FakePasswordResetTokenRepositoryState>,
+}
+
+impl FakePasswordResetTokenRepository {
+    pub fn snapshot(&self) -> FakePasswordResetTokenRepositoryState {
+        self.state.lock().expect("state lock poisoned").clone()
+    }
+
+    pub fn insert_token(&self, token: PasswordResetToken) {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.tokens_by_hash.insert(token.token_hash.clone(), token);
+    }
+}
+
+#[async_trait]
+impl PasswordResetTokenRepository for FakePasswordResetTokenRepository {
+    async fn save(&self, token: PasswordResetToken) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.saved_tokens.push(token.clone());
+        state.tokens_by_hash.insert(token.token_hash.clone(), token);
+        Ok(())
+    }
+
+    async fn find_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<PasswordResetToken>, AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.find_by_hash_inputs.push(token_hash.to_string());
+        Ok(state.tokens_by_hash.get(token_hash).cloned())
+    }
+
+    async fn find_latest_active_by_user_id(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<PasswordResetToken>, AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.find_latest_inputs.push(user_id);
+        Ok(state
+            .tokens_by_hash
+            .values()
+            .filter(|token| {
+                token.user_id == user_id
+                    && token.consumed_at.is_none()
+                    && token.invalidated_at.is_none()
+            })
+            .max_by_key(|token| token.created_at.timestamp_millis())
+            .cloned())
+    }
+
+    async fn invalidate_active_tokens_for_user(
+        &self,
+        user_id: Uuid,
+        invalidated_at: DateTime<Utc>,
+    ) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.invalidate_calls.push((user_id, invalidated_at));
+        for token in state.tokens_by_hash.values_mut() {
+            if token.user_id == user_id
+                && token.consumed_at.is_none()
+                && token.invalidated_at.is_none()
+            {
+                token.invalidated_at = Some(invalidated_at);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct FakePasswordResetCompletionRepository {
+    token_repository: Arc<FakePasswordResetTokenRepository>,
+    user_repository: Arc<FakeUserRepository>,
+    session_repository: Arc<FakeSessionRepository>,
+}
+
+impl FakePasswordResetCompletionRepository {
+    pub fn new(
+        token_repository: Arc<FakePasswordResetTokenRepository>,
+        user_repository: Arc<FakeUserRepository>,
+        session_repository: Arc<FakeSessionRepository>,
+    ) -> Self {
+        Self {
+            token_repository,
+            user_repository,
+            session_repository,
+        }
+    }
+}
+
+#[async_trait]
+impl PasswordResetCompletionRepository for FakePasswordResetCompletionRepository {
+    async fn complete_password_reset(
+        &self,
+        token_id: Uuid,
+        user_id: Uuid,
+        password_hash: String,
+        completed_at: DateTime<Utc>,
+    ) -> Result<bool, AuthError> {
+        if let Some(err) = self
+            .user_repository
+            .update_password_hash_error
+            .lock()
+            .expect("error lock poisoned")
+            .clone()
+        {
+            return Err(err);
+        }
+        if let Some(err) = self
+            .session_repository
+            .revoke_error
+            .lock()
+            .expect("error lock poisoned")
+            .clone()
+        {
+            return Err(err);
+        }
+
+        {
+            let state = self
+                .token_repository
+                .state
+                .lock()
+                .expect("state lock poisoned");
+            let token_available = state.tokens_by_hash.values().any(|token| {
+                token.id == token_id
+                    && token.user_id == user_id
+                    && token.consumed_at.is_none()
+                    && token.invalidated_at.is_none()
+                    && token.expires_at > completed_at
+            });
+            if !token_available {
+                return Ok(false);
+            }
+        }
+
+        {
+            let user_state = self
+                .user_repository
+                .state
+                .lock()
+                .expect("state lock poisoned");
+            if !user_state.users_by_id.contains_key(&user_id) {
+                return Err(AuthError::UserNotFound);
+            }
+        }
+
+        {
+            let mut state = self
+                .token_repository
+                .state
+                .lock()
+                .expect("state lock poisoned");
+            state.consume_calls.push((token_id, completed_at));
+            for token in state.tokens_by_hash.values_mut() {
+                if token.id == token_id {
+                    token.consumed_at = Some(completed_at);
+                }
+            }
+        }
+
+        {
+            let mut state = self
+                .user_repository
+                .state
+                .lock()
+                .expect("state lock poisoned");
+            state
+                .update_password_hash_calls
+                .push((user_id, password_hash.clone(), completed_at));
+            let mut updated_user: Option<User> = None;
+            if let Some(user) = state.users_by_id.get_mut(&user_id) {
+                user.password_hash = password_hash;
+                user.updated_at = completed_at;
+                updated_user = Some(user.clone());
+            }
+            if let Some(user) = updated_user {
+                state.users_by_email.insert(user.email.clone(), user);
+            }
+        }
+
+        {
+            let mut state = self
+                .session_repository
+                .state
+                .lock()
+                .expect("state lock poisoned");
+            state.revoke_calls.push((user_id, completed_at));
+            for session in state.sessions_by_hash.values_mut() {
+                if session.user_id == user_id && session.expires_at > completed_at {
+                    session.expires_at = completed_at;
+                }
+            }
+        }
+
+        Ok(true)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct FakePasswordHasherState {
     pub hash_calls: Vec<String>,
 }
@@ -592,6 +827,7 @@ impl VerificationTokenHasher for FakeTokenHasher {
 #[derive(Debug, Clone, Default)]
 pub struct FakeEmailSenderState {
     pub sent_messages: Vec<(String, String)>,
+    pub sent_password_resets: Vec<(String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -636,6 +872,25 @@ impl MfaEmailSender for FakeEmailSender {
         state
             .sent_messages
             .push((to_email.to_string(), raw_code.to_string()));
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl PasswordResetEmailSender for FakeEmailSender {
+    async fn send_password_reset_email(
+        &self,
+        to_email: &str,
+        raw_token: &str,
+    ) -> Result<(), AuthError> {
+        if let Some(err) = self.send_error.lock().expect("error lock poisoned").clone() {
+            return Err(err);
+        }
+
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state
+            .sent_password_resets
+            .push((to_email.to_string(), raw_token.to_string()));
         Ok(())
     }
 }
@@ -792,16 +1047,26 @@ impl EmailMfaCodeRepository for FakeEmailMfaCodeRepository {
 pub struct FakeSessionRepositoryState {
     pub sessions_by_hash: HashMap<String, AuthSession>,
     pub saved_sessions: Vec<AuthSession>,
+    pub revoke_calls: Vec<(Uuid, DateTime<Utc>)>,
 }
 
 #[derive(Debug, Default)]
 pub struct FakeSessionRepository {
     pub state: Mutex<FakeSessionRepositoryState>,
+    pub revoke_error: Mutex<Option<AuthError>>,
 }
 
 impl FakeSessionRepository {
     pub fn snapshot(&self) -> FakeSessionRepositoryState {
         self.state.lock().expect("state lock poisoned").clone()
+    }
+
+    pub fn insert_session(&self, session: AuthSession) {
+        self.state
+            .lock()
+            .expect("state lock poisoned")
+            .sessions_by_hash
+            .insert(session.jti_hash.clone(), session);
     }
 }
 
@@ -1020,6 +1285,9 @@ impl Clock for FixedClock {
 pub struct UseCaseTestContext {
     pub user_repository: Arc<FakeUserRepository>,
     pub token_repository: Arc<FakeTokenRepository>,
+    pub password_reset_token_repository: Arc<FakePasswordResetTokenRepository>,
+    pub password_reset_completion_repository: Arc<FakePasswordResetCompletionRepository>,
+    pub session_repository: Arc<FakeSessionRepository>,
     pub password_hasher: Arc<FakePasswordHasher>,
     pub token_generator: Arc<FakeTokenGenerator>,
     pub token_hasher: Arc<FakeTokenHasher>,
@@ -1030,9 +1298,22 @@ pub struct UseCaseTestContext {
 
 impl UseCaseTestContext {
     pub fn new(now: DateTime<Utc>) -> Self {
+        let user_repository = Arc::new(FakeUserRepository::default());
+        let password_reset_token_repository = Arc::new(FakePasswordResetTokenRepository::default());
+        let session_repository = Arc::new(FakeSessionRepository::default());
+
         Self {
-            user_repository: Arc::new(FakeUserRepository::default()),
+            user_repository: user_repository.clone(),
             token_repository: Arc::new(FakeTokenRepository::default()),
+            password_reset_completion_repository: Arc::new(
+                FakePasswordResetCompletionRepository::new(
+                    password_reset_token_repository.clone(),
+                    user_repository,
+                    session_repository.clone(),
+                ),
+            ),
+            password_reset_token_repository,
+            session_repository,
             password_hasher: Arc::new(FakePasswordHasher::default()),
             token_generator: Arc::new(FakeTokenGenerator::default()),
             token_hasher: Arc::new(FakeTokenHasher::default()),
@@ -1081,6 +1362,30 @@ impl UseCaseTestContext {
         )
     }
 
+    pub fn forgot_password_use_case(&self) -> ForgotPasswordUseCase {
+        ForgotPasswordUseCase::new(
+            self.user_repository.clone(),
+            self.password_reset_token_repository.clone(),
+            self.token_generator.clone(),
+            self.token_hasher.clone(),
+            self.email_sender.clone(),
+            self.clock.clone(),
+            self.policy.clone(),
+        )
+    }
+
+    pub fn reset_password_use_case(&self) -> ResetPasswordUseCase {
+        ResetPasswordUseCase::new(
+            self.user_repository.clone(),
+            self.password_reset_token_repository.clone(),
+            self.password_reset_completion_repository.clone(),
+            self.password_hasher.clone(),
+            self.token_hasher.clone(),
+            self.clock.clone(),
+            self.policy.clone(),
+        )
+    }
+
     pub fn seed_token_from_raw(
         &self,
         user_id: Uuid,
@@ -1091,6 +1396,20 @@ impl UseCaseTestContext {
         let token_hash = FakeTokenHasher::deterministic_hash(raw_token);
         let token = sample_token(user_id, &token_hash, created_at, expires_at);
         self.token_repository.insert_token(token.clone());
+        token
+    }
+
+    pub fn seed_password_reset_token_from_raw(
+        &self,
+        user_id: Uuid,
+        raw_token: &str,
+        created_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> PasswordResetToken {
+        let token_hash = FakeTokenHasher::deterministic_hash(raw_token);
+        let token = sample_password_reset_token(user_id, &token_hash, created_at, expires_at);
+        self.password_reset_token_repository
+            .insert_token(token.clone());
         token
     }
 }

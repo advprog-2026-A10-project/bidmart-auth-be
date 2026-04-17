@@ -4,10 +4,10 @@ use uuid::Uuid;
 use validator::ValidateEmail;
 
 use crate::modules::auth::application::dto::{
-    AuthTokenResult, AuthenticatedUserContext, DisableMfaCommand, LoginCommand, LoginOutcome,
-    MfaSettingsDto, SendEmailMfaCommand, SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult,
-    VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand,
-    VerifyTotpSetupCommand,
+    AuthTokenResult, AuthenticatedLoginResult, AuthenticatedUserContext, DisableMfaCommand,
+    LoginCommand, LoginOutcome, MfaSettingsDto, SendEmailMfaCommand, SetupEmailMfaCommand,
+    SetupTotpCommand, SetupTotpResult, VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand,
+    VerifyTotpMfaCommand, VerifyTotpSetupCommand,
 };
 use crate::modules::auth::application::use_cases::policy::AuthPolicy;
 use crate::modules::auth::domain::entities::{
@@ -107,14 +107,18 @@ impl AuthMfaUseCase {
 
             return Ok(LoginOutcome::MfaRequired {
                 mfa_ticket: raw_ticket,
-                methods: user.mfa_methods(),
+                mfa_type: primary_mfa_type(&user),
             });
         }
 
-        let access_token = self.issue_access_token(user.id, true).await?;
-        Ok(LoginOutcome::Authenticated {
+        let access_token = self.issue_access_token(&user, true).await?;
+        Ok(LoginOutcome::Authenticated(AuthenticatedLoginResult {
+            user_id: access_token.user_id,
+            name: access_token.name,
+            email: access_token.email,
+            email_verified: access_token.email_verified,
             access_token: access_token.access_token,
-        })
+        }))
     }
 
     pub async fn send_email_mfa(&self, command: SendEmailMfaCommand) -> Result<(), AuthError> {
@@ -192,7 +196,7 @@ impl AuthMfaUseCase {
             return Err(AuthError::MfaTicketInvalid);
         }
 
-        self.issue_access_token(user.id, true).await
+        self.issue_access_token(&user, true).await
     }
 
     pub async fn verify_totp_mfa(
@@ -222,7 +226,7 @@ impl AuthMfaUseCase {
             return Err(AuthError::MfaTicketInvalid);
         }
 
-        self.issue_access_token(user.id, true).await
+        self.issue_access_token(&user, true).await
     }
 
     pub async fn get_mfa_settings(
@@ -313,6 +317,16 @@ impl AuthMfaUseCase {
             .require_current_password(&auth, command.current_password.as_deref())
             .await?;
         let now = self.clock.now();
+        if let Some(active_code) = self
+            .email_mfa_code_repository
+            .find_latest_active_by_user_id(user.id)
+            .await?
+        {
+            if active_code.created_at + self.policy.email_mfa_cooldown > now {
+                return Err(AuthError::MfaCodeCooldownActive);
+            }
+        }
+
         self.email_mfa_code_repository
             .invalidate_active_codes_for_user(user.id, now)
             .await?;
@@ -440,20 +454,20 @@ impl AuthMfaUseCase {
 
     async fn issue_access_token(
         &self,
-        user_id: Uuid,
+        user: &User,
         mfa_satisfied: bool,
     ) -> Result<AuthTokenResult, AuthError> {
         let now = self.clock.now();
         let issued = self
             .jwt_service
-            .issue_access_token(user_id, mfa_satisfied, now)?;
+            .issue_access_token(user.id, mfa_satisfied, now)?;
         let jti_hash = self.jwt_service.jti_hash(&issued.jti)?;
         let session_expires_at =
             std::cmp::min(issued.expires_at, now + self.policy.access_token_ttl);
         self.session_repository
             .save(AuthSession {
                 id: Uuid::new_v4(),
-                user_id,
+                user_id: user.id,
                 jti_hash,
                 mfa_satisfied,
                 created_at: now,
@@ -461,6 +475,10 @@ impl AuthMfaUseCase {
             })
             .await?;
         Ok(AuthTokenResult {
+            user_id: user.id,
+            name: user.display_name(),
+            email: user.email.clone(),
+            email_verified: user.is_email_verified(),
             access_token: issued.token,
         })
     }
@@ -481,4 +499,12 @@ fn require_login_allowed(user: &User) -> Result<(), AuthError> {
 
 fn normalize_email(input: &str) -> String {
     input.trim().to_ascii_lowercase()
+}
+
+fn primary_mfa_type(user: &User) -> String {
+    if user.mfa_totp_enabled {
+        "totp".to_string()
+    } else {
+        "email".to_string()
+    }
 }

@@ -6,6 +6,9 @@ pub const REGISTER_SUCCESS_MESSAGE: &str = "Registration successful. Please veri
 pub const VERIFY_EMAIL_SUCCESS_MESSAGE: &str = "Email verified.";
 pub const RESEND_VERIFICATION_MESSAGE: &str =
     "If the account exists and requires verification, a verification email has been sent.";
+pub const FORGOT_PASSWORD_MESSAGE: &str =
+    "If the account exists, a password reset email has been sent.";
+pub const RESET_PASSWORD_SUCCESS_MESSAGE: &str = "Password reset successful.";
 
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct RegisterUserCommand {
@@ -48,6 +51,29 @@ pub struct ResendVerificationResult {
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
+pub struct ForgotPasswordCommand {
+    pub email: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgotPasswordResult {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct ResetPasswordCommand {
+    #[validate(length(min = 1, message = "Token is required"))]
+    pub token: String,
+    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
+    pub password: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResetPasswordResult {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Validate)]
 pub struct LoginCommand {
     #[validate(email(message = "Email must be a valid email address"))]
     pub email: String,
@@ -57,30 +83,41 @@ pub struct LoginCommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginOutcome {
-    Authenticated {
-        access_token: String,
-    },
+    Authenticated(AuthenticatedLoginResult),
     MfaRequired {
         mfa_ticket: String,
-        methods: Vec<String>,
+        mfa_type: String,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthTokenResult {
+    pub user_id: Uuid,
+    pub name: String,
+    pub email: String,
+    pub email_verified: bool,
+    pub access_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedLoginResult {
+    pub user_id: Uuid,
+    pub name: String,
+    pub email: String,
+    pub email_verified: bool,
     pub access_token: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct SendEmailMfaCommand {
-    #[serde(rename = "mfaTicket")]
+    #[serde(rename = "ticket", alias = "mfaTicket")]
     #[validate(length(min = 1, message = "MFA ticket is required"))]
     pub mfa_ticket: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct VerifyEmailMfaCommand {
-    #[serde(rename = "mfaTicket")]
+    #[serde(rename = "ticket", alias = "mfaTicket")]
     #[validate(length(min = 1, message = "MFA ticket is required"))]
     pub mfa_ticket: String,
     #[validate(length(min = 6, max = 6, message = "Code must be 6 digits"))]
@@ -89,7 +126,7 @@ pub struct VerifyEmailMfaCommand {
 
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct VerifyTotpMfaCommand {
-    #[serde(rename = "mfaTicket")]
+    #[serde(rename = "ticket", alias = "mfaTicket")]
     #[validate(length(min = 1, message = "MFA ticket is required"))]
     pub mfa_ticket: String,
     #[validate(length(min = 6, max = 6, message = "Code must be 6 digits"))]
@@ -187,17 +224,21 @@ pub struct MessageResponseDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginResponseDto {
+    pub requires_mfa: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<PublicUserDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub mfa_ticket: Option<String>,
+    pub ticket: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub methods: Option<Vec<String>>,
+    pub mfa_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccessTokenResponseDto {
+    pub user: PublicUserDto,
     pub access_token: String,
 }
 
@@ -231,21 +272,46 @@ impl From<ResendVerificationResult> for MessageResponseDto {
     }
 }
 
+impl From<ForgotPasswordResult> for MessageResponseDto {
+    fn from(result: ForgotPasswordResult) -> Self {
+        Self {
+            message: result.message,
+        }
+    }
+}
+
+impl From<ResetPasswordResult> for MessageResponseDto {
+    fn from(result: ResetPasswordResult) -> Self {
+        Self {
+            message: result.message,
+        }
+    }
+}
+
 impl From<LoginOutcome> for LoginResponseDto {
     fn from(result: LoginOutcome) -> Self {
         match result {
-            LoginOutcome::Authenticated { access_token } => Self {
-                access_token: Some(access_token),
-                mfa_ticket: None,
-                methods: None,
+            LoginOutcome::Authenticated(result) => Self {
+                requires_mfa: false,
+                user: Some(PublicUserDto {
+                    id: result.user_id,
+                    name: result.name,
+                    email: result.email,
+                    email_verified: result.email_verified,
+                }),
+                access_token: Some(result.access_token),
+                ticket: None,
+                mfa_type: None,
             },
             LoginOutcome::MfaRequired {
                 mfa_ticket,
-                methods,
+                mfa_type,
             } => Self {
+                requires_mfa: true,
+                user: None,
                 access_token: None,
-                mfa_ticket: Some(mfa_ticket),
-                methods: Some(methods),
+                ticket: Some(mfa_ticket),
+                mfa_type: Some(mfa_type),
             },
         }
     }
@@ -254,6 +320,12 @@ impl From<LoginOutcome> for LoginResponseDto {
 impl From<AuthTokenResult> for AccessTokenResponseDto {
     fn from(result: AuthTokenResult) -> Self {
         Self {
+            user: PublicUserDto {
+                id: result.user_id,
+                name: result.name,
+                email: result.email,
+                email_verified: result.email_verified,
+            },
             access_token: result.access_token,
         }
     }

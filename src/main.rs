@@ -14,15 +14,18 @@ use infrastructure::config::AppConfig;
 use infrastructure::database::create_pool;
 use infrastructure::logger::init_tracer;
 use modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
+use modules::auth::application::use_cases::password_reset_use_case::{
+    ForgotPasswordUseCase, ResetPasswordUseCase,
+};
 use modules::auth::application::use_cases::policy::AuthPolicy;
 use modules::auth::application::use_cases::register_user_use_case::RegisterUserUseCase;
 use modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
 use modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
-use modules::auth::infrastructure::create_router;
+use modules::auth::infrastructure::create_router_with_cors_origins;
 use modules::auth::infrastructure::repositories::{
     PostgresEmailMfaCodeRepository, PostgresEmailVerificationTokenRepository,
-    PostgresMfaTicketRepository, PostgresSessionRepository, PostgresTotpSetupRepository,
-    PostgresUserRepository,
+    PostgresMfaTicketRepository, PostgresPasswordResetTokenRepository, PostgresSessionRepository,
+    PostgresTotpSetupRepository, PostgresUserRepository,
 };
 use modules::auth::infrastructure::services::{
     Hs256JwtService, RandomVerificationTokenGenerator, ResendVerificationEmailSender,
@@ -42,6 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let user_repository = Arc::new(PostgresUserRepository::new(pool.clone()));
     let token_repository = Arc::new(PostgresEmailVerificationTokenRepository::new(pool.clone()));
+    let password_reset_token_repository =
+        Arc::new(PostgresPasswordResetTokenRepository::new(pool.clone()));
     let mfa_ticket_repository = Arc::new(PostgresMfaTicketRepository::new(pool.clone()));
     let email_mfa_code_repository = Arc::new(PostgresEmailMfaCodeRepository::new(pool.clone()));
     let session_repository = Arc::new(PostgresSessionRepository::new(pool.clone()));
@@ -54,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         resend_client,
         config.resend_from_email.clone(),
         config.verify_email_url_base.clone(),
+        config.password_reset_url_base.clone(),
     ));
     let clock = Arc::new(SystemClock);
     let jwt_service = Arc::new(Hs256JwtService::new(
@@ -65,6 +71,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         min_password_length: config.auth_min_password_length,
         verification_token_ttl: Duration::seconds(config.auth_verification_token_ttl_seconds),
         resend_cooldown: Duration::seconds(config.auth_resend_cooldown_seconds),
+        password_reset_token_ttl: Duration::seconds(config.auth_password_reset_token_ttl_seconds),
+        password_reset_cooldown: Duration::seconds(config.auth_password_reset_cooldown_seconds),
         mfa_ticket_ttl: Duration::seconds(config.auth_mfa_ticket_ttl_seconds),
         email_mfa_code_ttl: Duration::seconds(config.auth_email_mfa_code_ttl_seconds),
         email_mfa_cooldown: Duration::seconds(config.auth_email_mfa_cooldown_seconds),
@@ -97,6 +105,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         clock.clone(),
         auth_policy.clone(),
     ));
+    let forgot_password_use_case = Arc::new(ForgotPasswordUseCase::new(
+        user_repository.clone(),
+        password_reset_token_repository.clone(),
+        token_generator.clone(),
+        token_hasher.clone(),
+        email_sender.clone(),
+        clock.clone(),
+        auth_policy.clone(),
+    ));
+    let reset_password_use_case = Arc::new(ResetPasswordUseCase::new(
+        user_repository.clone(),
+        password_reset_token_repository.clone(),
+        password_reset_token_repository,
+        password_hasher.clone(),
+        token_hasher.clone(),
+        clock.clone(),
+        auth_policy.clone(),
+    ));
     let auth_mfa_use_case = Arc::new(AuthMfaUseCase::new(
         user_repository,
         mfa_ticket_repository,
@@ -117,13 +143,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         register_use_case,
         verify_email_use_case,
         resend_verification_use_case,
+        forgot_password_use_case,
+        reset_password_use_case,
         auth_mfa_use_case,
         jwt_service,
         session_repository,
         clock,
     );
 
-    let router = create_router(app_state);
+    let router = create_router_with_cors_origins(app_state, &config.cors_allowed_origins);
 
     let address = format!("{}:{}", config.server_host, config.server_port);
     let listener = TcpListener::bind(&address).await?;

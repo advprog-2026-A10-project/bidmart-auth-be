@@ -85,8 +85,12 @@ jobs:
       APP_SERVER_HOST: ${{ secrets.APP_SERVER_HOST }}
       APP_SERVER_PORT: ${{ secrets.APP_SERVER_PORT }}
       APP_DATABASE_URL: ${{ secrets.APP_DATABASE_URL }}
-      APP_JWT_SECRET: ${{ secrets.APP_JWT_SECRET }}
-      APP_JWT_EXPIRATION_HOURS: ${{ secrets.APP_JWT_EXPIRATION_HOURS }}
+      APP_AUTH_JWT_SECRET: ${{ secrets.APP_AUTH_JWT_SECRET }}
+      APP_RESEND_API_KEY: ${{ secrets.APP_RESEND_API_KEY }}
+      APP_RESEND_FROM_EMAIL: ${{ secrets.APP_RESEND_FROM_EMAIL }}
+      APP_VERIFY_EMAIL_URL_BASE: ${{ secrets.APP_VERIFY_EMAIL_URL_BASE }}
+      APP_PASSWORD_RESET_URL_BASE: ${{ secrets.APP_PASSWORD_RESET_URL_BASE }}
+      APP_CORS_ALLOWED_ORIGINS: ${{ secrets.APP_CORS_ALLOWED_ORIGINS }}
     steps:
       - name: Check deploy prerequisites
         id: deploy_gate
@@ -94,7 +98,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -n "${EC2_HOST:-}" && -n "${EC2_USER:-}" && -n "${EC2_SSH_KEY:-}" && -n "${APP_DATABASE_URL:-}" && -n "${APP_JWT_SECRET:-}" ]]; then
+          if [[ -n "${EC2_HOST:-}" \
+            && -n "${EC2_USER:-}" \
+            && -n "${EC2_SSH_KEY:-}" \
+            && -n "${APP_DATABASE_URL:-}" \
+            && -n "${APP_AUTH_JWT_SECRET:-}" \
+            && -n "${APP_RESEND_API_KEY:-}" \
+            && -n "${APP_RESEND_FROM_EMAIL:-}" \
+            && -n "${APP_VERIFY_EMAIL_URL_BASE:-}" \
+            && -n "${APP_PASSWORD_RESET_URL_BASE:-}" \
+            && -n "${APP_CORS_ALLOWED_ORIGINS:-}" ]]; then
             echo "should_deploy=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -109,12 +122,11 @@ jobs:
           host: ${{ env.EC2_HOST }}
           username: ${{ env.EC2_USER }}
           key: ${{ env.EC2_SSH_KEY }}
-          envs: IMAGE,CONTAINER_NAME,HOST_PORT,CONTAINER_PORT,APP_SERVER_HOST,APP_SERVER_PORT,APP_DATABASE_URL,APP_JWT_SECRET,APP_JWT_EXPIRATION_HOURS
+          envs: IMAGE,CONTAINER_NAME,HOST_PORT,CONTAINER_PORT,APP_SERVER_HOST,APP_SERVER_PORT,APP_DATABASE_URL,APP_AUTH_JWT_SECRET,APP_RESEND_API_KEY,APP_RESEND_FROM_EMAIL,APP_VERIFY_EMAIL_URL_BASE,APP_PASSWORD_RESET_URL_BASE,APP_CORS_ALLOWED_ORIGINS
           script: |
             set -euo pipefail
             server_host="${APP_SERVER_HOST:-0.0.0.0}"
             server_port="${APP_SERVER_PORT:-$CONTAINER_PORT}"
-            jwt_expiration_hours="${APP_JWT_EXPIRATION_HOURS:-24}"
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             docker pull "${IMAGE}"
             if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -126,6 +138,10 @@ jobs:
               -e APP_SERVER_HOST="${server_host}" \
               -e APP_SERVER_PORT="${server_port}" \
               -e APP_DATABASE_URL="${APP_DATABASE_URL}" \
-              -e APP_JWT_SECRET="${APP_JWT_SECRET}" \
-              -e APP_JWT_EXPIRATION_HOURS="${jwt_expiration_hours}" \
+              -e APP_AUTH_JWT_SECRET="${APP_AUTH_JWT_SECRET}" \
+              -e APP_RESEND_API_KEY="${APP_RESEND_API_KEY}" \
+              -e APP_RESEND_FROM_EMAIL="${APP_RESEND_FROM_EMAIL}" \
+              -e APP_VERIFY_EMAIL_URL_BASE="${APP_VERIFY_EMAIL_URL_BASE}" \
+              -e APP_PASSWORD_RESET_URL_BASE="${APP_PASSWORD_RESET_URL_BASE}" \
+              -e APP_CORS_ALLOWED_ORIGINS="${APP_CORS_ALLOWED_ORIGINS}" \
               "${IMAGE}"

@@ -87,17 +87,6 @@ impl User {
     pub fn has_mfa_enabled(&self) -> bool {
         self.mfa_email_enabled || self.mfa_totp_enabled
     }
-
-    pub fn mfa_methods(&self) -> Vec<String> {
-        let mut methods = Vec::new();
-        if self.mfa_email_enabled {
-            methods.push("email".to_string());
-        }
-        if self.mfa_totp_enabled {
-            methods.push("totp".to_string());
-        }
-        methods
-    }
 }
 
 pub fn normalize_name(name: &str) -> Option<String> {

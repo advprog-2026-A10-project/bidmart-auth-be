@@ -95,12 +95,15 @@ async fn login_for_verified_user_without_mfa_issues_access_token_and_persists_se
         .await
         .expect("login succeeds");
 
-    assert_eq!(
-        result,
-        LoginOutcome::Authenticated {
-            access_token: "access.jwt".to_string()
+    match result {
+        LoginOutcome::Authenticated(result) => {
+            assert_eq!(result.access_token, "access.jwt");
+            assert_eq!(result.email, "verified@example.com");
+            assert_eq!(result.name, "Auth User");
+            assert!(result.email_verified);
         }
-    );
+        _ => panic!("expected authenticated login"),
+    }
     assert_eq!(
         context.session_repository.snapshot().saved_sessions.len(),
         1
@@ -137,7 +140,7 @@ async fn login_for_mfa_enabled_user_issues_scoped_mfa_ticket_only() {
         result,
         LoginOutcome::MfaRequired {
             mfa_ticket: "raw-mfa-ticket".to_string(),
-            methods: vec!["email".to_string()]
+            mfa_type: "email".to_string()
         }
     );
     assert!(context
@@ -181,6 +184,45 @@ async fn email_mfa_send_enforces_cooldown_and_code_expiry() {
         code.expires_at,
         fixed_now() + context.policy.email_mfa_code_ttl
     );
+}
+
+#[tokio::test]
+async fn settings_email_mfa_setup_enforces_cooldown() {
+    let context = AuthUseCaseTestContext::default();
+    let user = verified_user("settings-email-cooldown@example.com");
+    context.user_repository.insert_user(user.clone());
+    context
+        .password_verifier
+        .accept("correct-password", "hash::correct-password");
+    context.token_generator.push_token("654321".to_string());
+    let auth = AuthenticatedUserContext {
+        user_id: user.id,
+        mfa_satisfied: true,
+        session_jti_hash: None,
+    };
+
+    context
+        .auth_mfa_use_case()
+        .setup_email_mfa(
+            auth.clone(),
+            SetupEmailMfaCommand {
+                current_password: Some("correct-password".to_string()),
+            },
+        )
+        .await
+        .expect("first settings email setup send succeeds");
+
+    let cooldown = context
+        .auth_mfa_use_case()
+        .setup_email_mfa(
+            auth,
+            SetupEmailMfaCommand {
+                current_password: Some("correct-password".to_string()),
+            },
+        )
+        .await;
+
+    assert_eq!(cooldown, Err(AuthError::MfaCodeCooldownActive));
 }
 
 #[tokio::test]

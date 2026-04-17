@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
-use axum::http::header::CONTENT_TYPE;
+use axum::http::header::{CONTENT_TYPE, SET_COOKIE};
 use axum::http::{Request, StatusCode};
 use chrono::Duration;
 use serde_json::{json, Value};
@@ -20,6 +20,8 @@ fn test_router(context: &UseCaseTestContext) -> axum::Router {
         Arc::new(context.register_use_case()),
         Arc::new(context.verify_email_use_case()),
         Arc::new(context.resend_verification_use_case()),
+        Arc::new(context.forgot_password_use_case()),
+        Arc::new(context.reset_password_use_case()),
         Arc::new(auth_context.auth_mfa_use_case()),
         auth_context.jwt_issuer,
         auth_context.session_repository,
@@ -35,6 +37,8 @@ fn auth_test_router(context: &AuthUseCaseTestContext) -> axum::Router {
         Arc::new(base_context.register_use_case()),
         Arc::new(base_context.verify_email_use_case()),
         Arc::new(base_context.resend_verification_use_case()),
+        Arc::new(base_context.forgot_password_use_case()),
+        Arc::new(base_context.reset_password_use_case()),
         Arc::new(context.auth_mfa_use_case()),
         context.jwt_issuer.clone(),
         context.session_repository.clone(),
@@ -325,6 +329,69 @@ async fn non_2xx_responses_use_json_error_envelope_for_resend_cooldown() {
 }
 
 #[tokio::test]
+async fn password_reset_endpoints_return_contract_shapes_without_cookies() {
+    let now = fixed_now();
+    let context = UseCaseTestContext::new(now);
+    let mut user = sample_user("Reset Contract", "reset.contract@example.com", now);
+    user.status = UserStatus::Active;
+    user.email_verified_at = Some(now);
+    context.user_repository.insert_user(user.clone());
+    context
+        .token_generator
+        .push_token("contract-reset-token".to_string());
+    let app = test_router(&context);
+
+    let forgot_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/forgot-password")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "email": " RESET.CONTRACT@EXAMPLE.COM " }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(forgot_response.status(), StatusCode::OK);
+    assert!(forgot_response.headers().get(SET_COOKIE).is_none());
+    assert_eq!(
+        response_json(forgot_response).await,
+        json!({
+            "message": "If the account exists, a password reset email has been sent."
+        })
+    );
+
+    let reset_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/reset-password")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "token": "contract-reset-token",
+                        "password": "NewPassword123!"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(reset_response.status(), StatusCode::OK);
+    assert!(reset_response.headers().get(SET_COOKIE).is_none());
+    assert_eq!(
+        response_json(reset_response).await,
+        json!({ "message": "Password reset successful." })
+    );
+}
+
+#[tokio::test]
 async fn post_login_verified_without_mfa_returns_access_token_contract() {
     let context = AuthUseCaseTestContext::default();
     let user = verified_auth_user("login@example.com");
@@ -357,7 +424,12 @@ async fn post_login_verified_without_mfa_returns_access_token_contract() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let body = response_json(response).await;
-    assert_eq!(body, json!({ "accessToken": "access.jwt" }));
+    assert_eq!(body["requiresMfa"], false);
+    assert_eq!(body["accessToken"], "access.jwt");
+    assert_eq!(body["user"]["name"], "Contract Auth");
+    assert_eq!(body["user"]["email"], "login@example.com");
+    assert_eq!(body["user"]["emailVerified"], true);
+    assert!(body["user"]["id"].as_str().is_some());
 }
 
 #[tokio::test]
@@ -394,8 +466,14 @@ async fn post_login_mfa_enabled_returns_ticket_contract() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let body = response_json(response).await;
-    assert_eq!(body["mfaTicket"], "contract-mfa-ticket");
-    assert_eq!(body["methods"], json!(["email"]));
+    assert_eq!(
+        body,
+        json!({
+            "requiresMfa": true,
+            "ticket": "contract-mfa-ticket",
+            "mfaType": "email"
+        })
+    );
 }
 
 #[tokio::test]
@@ -428,9 +506,7 @@ async fn public_mfa_email_and_totp_endpoints_return_contract_shapes() {
                 .method("POST")
                 .uri("/auth/mfa/send-email")
                 .header(CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({ "mfaTicket": "send-ticket" }).to_string(),
-                ))
+                .body(Body::from(json!({ "ticket": "send-ticket" }).to_string()))
                 .expect("request"),
         )
         .await
@@ -464,7 +540,15 @@ async fn public_mfa_email_and_totp_endpoints_return_contract_shapes() {
     assert_eq!(email_response.status(), StatusCode::OK);
     assert_eq!(
         response_json(email_response).await,
-        json!({ "accessToken": "email.access.jwt" })
+        json!({
+            "accessToken": "email.access.jwt",
+            "user": {
+                "id": user.id,
+                "name": "Contract Auth",
+                "email": "public-mfa@example.com",
+                "emailVerified": true
+            }
+        })
     );
 
     let totp_response = app
@@ -483,7 +567,15 @@ async fn public_mfa_email_and_totp_endpoints_return_contract_shapes() {
     assert_eq!(totp_response.status(), StatusCode::OK);
     assert_eq!(
         response_json(totp_response).await,
-        json!({ "accessToken": "totp.access.jwt" })
+        json!({
+            "accessToken": "totp.access.jwt",
+            "user": {
+                "id": user.id,
+                "name": "Contract Auth",
+                "email": "public-mfa@example.com",
+                "emailVerified": true
+            }
+        })
     );
 }
 

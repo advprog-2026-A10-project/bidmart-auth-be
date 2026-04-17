@@ -22,6 +22,12 @@ pub enum AuthError {
     VerificationTokenAlreadyUsed,
     #[error("verification cooldown active")]
     VerificationCooldownActive,
+    #[error("password reset token invalid")]
+    PasswordResetTokenInvalid,
+    #[error("password reset token expired")]
+    PasswordResetTokenExpired,
+    #[error("password reset token already used")]
+    PasswordResetTokenAlreadyUsed,
     #[error("invalid credentials")]
     InvalidCredentials,
     #[error("email not verified")]

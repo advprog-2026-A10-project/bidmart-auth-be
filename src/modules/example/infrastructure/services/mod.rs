@@ -22,8 +22,8 @@ use uuid::Uuid;
 use crate::modules::auth::application::dto::{AuthenticatedUserContext, IssuedAccessToken};
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
-    Clock, JwtService, MfaEmailSender, PasswordHasher, PasswordVerifier, TotpService,
-    VerificationEmailSender, VerificationTokenGenerator, VerificationTokenHasher,
+    Clock, JwtService, MfaEmailSender, PasswordHasher, PasswordResetEmailSender, PasswordVerifier,
+    TotpService, VerificationEmailSender, VerificationTokenGenerator, VerificationTokenHasher,
 };
 
 #[derive(Debug, Default)]
@@ -84,14 +84,21 @@ pub struct ResendVerificationEmailSender {
     client: Arc<Resend>,
     from_email: String,
     verify_email_url_base: String,
+    password_reset_url_base: String,
 }
 
 impl ResendVerificationEmailSender {
-    pub fn new(client: Resend, from_email: String, verify_email_url_base: String) -> Self {
+    pub fn new(
+        client: Resend,
+        from_email: String,
+        verify_email_url_base: String,
+        password_reset_url_base: String,
+    ) -> Self {
         Self {
             client: Arc::new(client),
             from_email,
             verify_email_url_base,
+            password_reset_url_base,
         }
     }
 }
@@ -145,6 +152,35 @@ impl MfaEmailSender for ResendVerificationEmailSender {
             .send(email)
             .await
             .map_err(|_| AuthError::DependencyFailure("failed to send mfa email".to_string()))?;
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl PasswordResetEmailSender for ResendVerificationEmailSender {
+    async fn send_password_reset_email(
+        &self,
+        to_email: &str,
+        raw_token: &str,
+    ) -> Result<(), AuthError> {
+        let reset_link = format!("{}{}", self.password_reset_url_base, raw_token);
+        let html = format!(
+            "<p>Reset your BidMart password by opening this link:</p><p><a href=\"{reset_link}\">{reset_link}</a></p>"
+        );
+        let text = format!("Reset your BidMart password by opening this link: {reset_link}");
+
+        let email = CreateEmailBaseOptions::new(
+            self.from_email.clone(),
+            vec![to_email.to_string()],
+            "Reset your BidMart password",
+        )
+        .with_html(&html)
+        .with_text(&text);
+
+        self.client.emails.send(email).await.map_err(|_| {
+            AuthError::DependencyFailure("failed to send password reset email".to_string())
+        })?;
 
         Ok(())
     }
