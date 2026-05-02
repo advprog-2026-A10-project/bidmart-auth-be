@@ -61,7 +61,7 @@ impl AppConfig {
             )?,
             auth_password_reset_token_ttl_seconds: optional_parsed_env(
                 "APP_AUTH_PASSWORD_RESET_TOKEN_TTL_SECONDS",
-                900,
+                30,
             )?,
             auth_password_reset_cooldown_seconds: optional_parsed_env(
                 "APP_AUTH_PASSWORD_RESET_COOLDOWN_SECONDS",
@@ -73,7 +73,7 @@ impl AppConfig {
             )?,
             auth_email_mfa_code_ttl_seconds: optional_parsed_env(
                 "APP_AUTH_EMAIL_MFA_CODE_TTL_SECONDS",
-                300,
+                30,
             )?,
             auth_email_mfa_cooldown_seconds: optional_parsed_env(
                 "APP_AUTH_EMAIL_MFA_COOLDOWN_SECONDS",

@@ -146,6 +146,8 @@ pub struct SetupTotpResult {
     pub secret: String,
     #[serde(rename = "otpauthUrl")]
     pub otpauth_url: String,
+    #[serde(rename = "qrCodeUrl")]
+    pub qr_code_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
@@ -192,6 +194,10 @@ pub struct MfaSettingsDto {
     pub email_enabled: bool,
     #[serde(rename = "totpEnabled")]
     pub totp_enabled: bool,
+    #[serde(rename = "mfaEnabled")]
+    pub mfa_enabled: bool,
+    #[serde(rename = "mfaType")]
+    pub mfa_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

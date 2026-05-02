@@ -234,9 +234,18 @@ impl AuthMfaUseCase {
         auth: AuthenticatedUserContext,
     ) -> Result<MfaSettingsDto, AuthError> {
         let user = self.require_settings_user(&auth).await?;
+        let mfa_type = if user.mfa_totp_enabled {
+            Some("totp".to_string())
+        } else if user.mfa_email_enabled {
+            Some("email".to_string())
+        } else {
+            None
+        };
         Ok(MfaSettingsDto {
             email_enabled: user.mfa_email_enabled,
             totp_enabled: user.mfa_totp_enabled,
+            mfa_enabled: user.mfa_email_enabled || user.mfa_totp_enabled,
+            mfa_type,
         })
     }
 
@@ -264,9 +273,11 @@ impl AuthMfaUseCase {
             })
             .await?;
 
+        let otpauth_url = self.totp_service.otpauth_url(&user.email, &secret)?;
         Ok(SetupTotpResult {
             setup_ticket: raw_setup_ticket,
-            otpauth_url: self.totp_service.otpauth_url(&user.email, &secret)?,
+            otpauth_url: otpauth_url.clone(),
+            qr_code_url: otpauth_url,
             secret,
         })
     }

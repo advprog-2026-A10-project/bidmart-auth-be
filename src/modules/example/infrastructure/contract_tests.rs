@@ -621,7 +621,12 @@ async fn protected_settings_mfa_endpoints_require_bearer_and_return_contracts() 
     assert_eq!(settings.status(), StatusCode::OK);
     assert_eq!(
         response_json(settings).await,
-        json!({ "emailEnabled": false, "totpEnabled": false })
+        json!({
+            "emailEnabled": false,
+            "totpEnabled": false,
+            "mfaEnabled": false,
+            "mfaType": null
+        })
     );
 
     let totp_setup = app
@@ -643,6 +648,7 @@ async fn protected_settings_mfa_endpoints_require_bearer_and_return_contracts() 
     let totp_setup_body = response_json(totp_setup).await;
     assert_eq!(totp_setup_body["setupTicket"], "setup-ticket");
     assert!(totp_setup_body["secret"].as_str().is_some());
+    assert_eq!(totp_setup_body["qrCodeUrl"], totp_setup_body["otpauthUrl"]);
 
     context
         .totp_service
@@ -724,4 +730,46 @@ async fn protected_settings_mfa_endpoints_require_bearer_and_return_contracts() 
         .await
         .expect("response");
     assert_eq!(disable.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn settings_mfa_status_returns_pdf_compatible_enabled_fields() {
+    let cases = [
+        (false, true, "email"),
+        (true, false, "totp"),
+        (true, true, "totp"),
+    ];
+
+    for (totp_enabled, email_enabled, expected_type) in cases {
+        let context = AuthUseCaseTestContext::default();
+        let mut user = verified_auth_user(&format!("{expected_type}-{totp_enabled}@example.com"));
+        user.mfa_totp_enabled = totp_enabled;
+        user.mfa_email_enabled = email_enabled;
+        context.user_repository.insert_user(user.clone());
+        let bearer = seed_authenticated_session(&context, user.id);
+        let app = auth_test_router(&context);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/settings/security/mfa")
+                    .header("authorization", format!("Bearer {bearer}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(response).await,
+            json!({
+                "emailEnabled": email_enabled,
+                "totpEnabled": totp_enabled,
+                "mfaEnabled": true,
+                "mfaType": expected_type
+            })
+        );
+    }
 }
