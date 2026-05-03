@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::modules::auth::application::dto::{AuthenticatedUserContext, IssuedAccessToken};
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, NotificationPreferences,
-    PasswordResetToken, TotpSetup, User,
+    AuthSession, EmailMfaCode, EmailMfaCodePurpose, EmailVerificationToken, MfaTicket,
+    NotificationPreferences, PasswordResetToken, TotpSetup, User,
 };
 use crate::modules::auth::domain::errors::AuthError;
 
@@ -151,11 +151,13 @@ pub trait EmailMfaCodeRepository: Send + Sync {
     async fn find_latest_active_by_user_id(
         &self,
         user_id: Uuid,
+        purpose: EmailMfaCodePurpose,
     ) -> Result<Option<EmailMfaCode>, AuthError>;
     async fn consume(&self, code_id: Uuid, consumed_at: DateTime<Utc>) -> Result<bool, AuthError>;
     async fn invalidate_active_codes_for_user(
         &self,
         user_id: Uuid,
+        purpose: EmailMfaCodePurpose,
         invalidated_at: DateTime<Utc>,
     ) -> Result<(), AuthError>;
 }

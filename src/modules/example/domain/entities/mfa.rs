@@ -35,10 +35,34 @@ impl MfaTicket {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmailMfaCodePurpose {
+    Login,
+    Setup,
+}
+
+impl EmailMfaCodePurpose {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Login => "login",
+            Self::Setup => "setup",
+        }
+    }
+
+    pub fn from_storage_value(value: &str) -> Option<Self> {
+        match value {
+            "login" => Some(Self::Login),
+            "setup" => Some(Self::Setup),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmailMfaCode {
     pub id: Uuid,
     pub user_id: Uuid,
     pub code_hash: String,
+    pub purpose: EmailMfaCodePurpose,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub consumed_at: Option<DateTime<Utc>>,
@@ -50,6 +74,7 @@ impl EmailMfaCode {
         id: Uuid,
         user_id: Uuid,
         code_hash: String,
+        purpose: EmailMfaCodePurpose,
         created_at: DateTime<Utc>,
         expires_at: DateTime<Utc>,
     ) -> Self {
@@ -57,6 +82,7 @@ impl EmailMfaCode {
             id,
             user_id,
             code_hash,
+            purpose,
             created_at,
             expires_at,
             consumed_at: None,

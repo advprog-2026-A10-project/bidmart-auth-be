@@ -17,8 +17,8 @@ use crate::modules::auth::application::use_cases::register_user_use_case::Regist
 use crate::modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
 use crate::modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, NotificationPreferences,
-    PasswordResetToken, TotpSetup, User, UserStatus,
+    AuthSession, EmailMfaCode, EmailMfaCodePurpose, EmailVerificationToken, MfaTicket,
+    NotificationPreferences, PasswordResetToken, TotpSetup, User, UserStatus,
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
@@ -81,6 +81,7 @@ pub fn sample_mfa_ticket(
 pub fn sample_email_mfa_code(
     user_id: Uuid,
     code_hash: &str,
+    purpose: EmailMfaCodePurpose,
     created_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
 ) -> EmailMfaCode {
@@ -88,6 +89,7 @@ pub fn sample_email_mfa_code(
         id: Uuid::new_v4(),
         user_id,
         code_hash: code_hash.to_string(),
+        purpose,
         created_at,
         expires_at,
         consumed_at: None,
@@ -1061,6 +1063,7 @@ impl EmailMfaCodeRepository for FakeEmailMfaCodeRepository {
     async fn find_latest_active_by_user_id(
         &self,
         user_id: Uuid,
+        purpose: EmailMfaCodePurpose,
     ) -> Result<Option<EmailMfaCode>, AuthError> {
         let state = self.state.lock().expect("state lock poisoned");
         Ok(state
@@ -1068,6 +1071,7 @@ impl EmailMfaCodeRepository for FakeEmailMfaCodeRepository {
             .values()
             .filter(|code| {
                 code.user_id == user_id
+                    && code.purpose == purpose
                     && code.consumed_at.is_none()
                     && code.invalidated_at.is_none()
             })
@@ -1090,12 +1094,14 @@ impl EmailMfaCodeRepository for FakeEmailMfaCodeRepository {
     async fn invalidate_active_codes_for_user(
         &self,
         user_id: Uuid,
+        purpose: EmailMfaCodePurpose,
         invalidated_at: DateTime<Utc>,
     ) -> Result<(), AuthError> {
         let mut state = self.state.lock().expect("state lock poisoned");
         state.invalidate_calls.push((user_id, invalidated_at));
         for code in state.codes_by_hash.values_mut() {
             if code.user_id == user_id
+                && code.purpose == purpose
                 && code.consumed_at.is_none()
                 && code.invalidated_at.is_none()
             {
@@ -1679,8 +1685,25 @@ impl AuthUseCaseTestContext {
         created_at: DateTime<Utc>,
         expires_at: DateTime<Utc>,
     ) -> EmailMfaCode {
+        self.seed_email_mfa_code_with_purpose(
+            user_id,
+            raw_code,
+            EmailMfaCodePurpose::Login,
+            created_at,
+            expires_at,
+        )
+    }
+
+    pub fn seed_email_mfa_code_with_purpose(
+        &self,
+        user_id: Uuid,
+        raw_code: &str,
+        purpose: EmailMfaCodePurpose,
+        created_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> EmailMfaCode {
         let code_hash = FakeTokenHasher::deterministic_hash(raw_code);
-        let code = sample_email_mfa_code(user_id, &code_hash, created_at, expires_at);
+        let code = sample_email_mfa_code(user_id, &code_hash, purpose, created_at, expires_at);
         self.email_mfa_code_repository.insert_code(code.clone());
         code
     }

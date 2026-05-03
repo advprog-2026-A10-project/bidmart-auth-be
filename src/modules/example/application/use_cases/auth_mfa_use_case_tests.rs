@@ -1,4 +1,5 @@
 use chrono::Duration;
+use uuid::Uuid;
 
 use crate::modules::auth::application::dto::{
     AuthenticatedUserContext, DisableMfaCommand, LoginCommand, LoginOutcome, SendEmailMfaCommand,
@@ -8,7 +9,7 @@ use crate::modules::auth::application::dto::{
 use crate::modules::auth::application::use_cases::test_support::{
     fixed_now, sample_user, AuthUseCaseTestContext,
 };
-use crate::modules::auth::domain::entities::UserStatus;
+use crate::modules::auth::domain::entities::{AuthSession, EmailMfaCodePurpose, UserStatus};
 use crate::modules::auth::domain::errors::AuthError;
 
 fn verified_user(email: &str) -> crate::modules::auth::domain::entities::User {
@@ -223,6 +224,107 @@ async fn settings_email_mfa_setup_enforces_cooldown() {
         .await;
 
     assert_eq!(cooldown, Err(AuthError::MfaCodeCooldownActive));
+}
+
+#[tokio::test]
+async fn settings_email_mfa_setup_only_accepts_setup_purpose_codes() {
+    let context = AuthUseCaseTestContext::default();
+    let user = verified_user("settings-email-purpose@example.com");
+    context.user_repository.insert_user(user.clone());
+    context
+        .password_verifier
+        .accept("correct-password", "hash::correct-password");
+    context.seed_email_mfa_code_with_purpose(
+        user.id,
+        "123456",
+        EmailMfaCodePurpose::Login,
+        fixed_now() - Duration::seconds(1),
+        fixed_now() + Duration::minutes(5),
+    );
+
+    let result = context
+        .auth_mfa_use_case()
+        .verify_email_mfa_setup(
+            AuthenticatedUserContext {
+                user_id: user.id,
+                mfa_satisfied: true,
+                session_jti_hash: None,
+            },
+            VerifyEmailMfaSetupCommand {
+                code: "123456".to_string(),
+                current_password: Some("correct-password".to_string()),
+            },
+        )
+        .await;
+
+    assert_eq!(result, Err(AuthError::MfaCodeInvalid));
+}
+
+#[tokio::test]
+async fn change_password_revokes_other_active_sessions_after_success() {
+    let context = AuthUseCaseTestContext::default();
+    let user = verified_user("password-sessions@example.com");
+    context.user_repository.insert_user(user.clone());
+    context
+        .password_verifier
+        .accept("correct-password", "hash::correct-password");
+    let current_session = AuthSession {
+        id: Uuid::new_v4(),
+        user_id: user.id,
+        jti_hash: "current-jti-hash".to_string(),
+        mfa_satisfied: true,
+        device: "Current device".to_string(),
+        browser: "Firefox".to_string(),
+        os: "Windows".to_string(),
+        ip: "127.0.0.1".to_string(),
+        location: "Local".to_string(),
+        created_at: fixed_now(),
+        last_active_at: fixed_now(),
+        expires_at: fixed_now() + Duration::hours(1),
+    };
+    let other_session = AuthSession {
+        id: Uuid::new_v4(),
+        user_id: user.id,
+        jti_hash: "other-jti-hash".to_string(),
+        mfa_satisfied: true,
+        device: "Other device".to_string(),
+        browser: "Chrome".to_string(),
+        os: "Linux".to_string(),
+        ip: "192.0.2.1".to_string(),
+        location: "Remote".to_string(),
+        created_at: fixed_now(),
+        last_active_at: fixed_now(),
+        expires_at: fixed_now() + Duration::hours(1),
+    };
+    context
+        .session_repository
+        .insert_session(current_session.clone());
+    context
+        .session_repository
+        .insert_session(other_session.clone());
+
+    context
+        .auth_mfa_use_case()
+        .change_password(
+            AuthenticatedUserContext {
+                user_id: user.id,
+                mfa_satisfied: true,
+                session_jti_hash: Some("current-jti-hash".to_string()),
+            },
+            crate::modules::auth::application::dto::ChangePasswordCommand {
+                current_password: "correct-password".to_string(),
+                new_password: "NewPassword123!".to_string(),
+            },
+        )
+        .await
+        .expect("password change succeeds");
+
+    let sessions = context.session_repository.snapshot().sessions_by_hash;
+    assert_eq!(
+        sessions["current-jti-hash"].expires_at,
+        current_session.expires_at
+    );
+    assert_eq!(sessions["other-jti-hash"].expires_at, fixed_now());
 }
 
 #[tokio::test]

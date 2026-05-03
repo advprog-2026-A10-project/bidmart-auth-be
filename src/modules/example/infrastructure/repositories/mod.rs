@@ -5,8 +5,8 @@ use sqlx::{Row, Transaction};
 use uuid::Uuid;
 
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, NotificationPreferences,
-    PasswordResetToken, TotpSetup, User, UserStatus,
+    AuthSession, EmailMfaCode, EmailMfaCodePurpose, EmailVerificationToken, MfaTicket,
+    NotificationPreferences, PasswordResetToken, TotpSetup, User, UserStatus,
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
@@ -801,10 +801,13 @@ impl PostgresEmailMfaCodeRepository {
     }
 
     fn row_to_code(row: sqlx::postgres::PgRow) -> EmailMfaCode {
+        let purpose: String = row.get("purpose");
         EmailMfaCode {
             id: row.get("id"),
             user_id: row.get("user_id"),
             code_hash: row.get("code_hash"),
+            purpose: EmailMfaCodePurpose::from_storage_value(&purpose)
+                .unwrap_or(EmailMfaCodePurpose::Login),
             created_at: row.get("created_at"),
             expires_at: row.get("expired_at"),
             consumed_at: row.get("consumed_at"),
@@ -819,13 +822,14 @@ impl EmailMfaCodeRepository for PostgresEmailMfaCodeRepository {
         sqlx::query(
             r#"
             INSERT INTO email_mfa_codes (
-                id, user_id, code_hash, created_at, expired_at, consumed_at, invalidated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                id, user_id, code_hash, purpose, created_at, expired_at, consumed_at, invalidated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(code.id)
         .bind(code.user_id)
         .bind(code.code_hash)
+        .bind(code.purpose.as_str())
         .bind(code.created_at)
         .bind(code.expires_at)
         .bind(code.consumed_at)
@@ -839,7 +843,7 @@ impl EmailMfaCodeRepository for PostgresEmailMfaCodeRepository {
     async fn find_by_code_hash(&self, code_hash: &str) -> Result<Option<EmailMfaCode>, AuthError> {
         let row = sqlx::query(
             r#"
-            SELECT id, user_id, code_hash, created_at, expired_at, consumed_at, invalidated_at
+            SELECT id, user_id, code_hash, purpose, created_at, expired_at, consumed_at, invalidated_at
             FROM email_mfa_codes
             WHERE code_hash = $1
             "#,
@@ -854,17 +858,22 @@ impl EmailMfaCodeRepository for PostgresEmailMfaCodeRepository {
     async fn find_latest_active_by_user_id(
         &self,
         user_id: Uuid,
+        purpose: EmailMfaCodePurpose,
     ) -> Result<Option<EmailMfaCode>, AuthError> {
         let row = sqlx::query(
             r#"
-            SELECT id, user_id, code_hash, created_at, expired_at, consumed_at, invalidated_at
+            SELECT id, user_id, code_hash, purpose, created_at, expired_at, consumed_at, invalidated_at
             FROM email_mfa_codes
-            WHERE user_id = $1 AND consumed_at IS NULL AND invalidated_at IS NULL
+            WHERE user_id = $1
+              AND purpose = $2
+              AND consumed_at IS NULL
+              AND invalidated_at IS NULL
             ORDER BY created_at DESC
             LIMIT 1
             "#,
         )
         .bind(user_id)
+        .bind(purpose.as_str())
         .fetch_optional(&self.pool)
         .await
         .map_err(map_database_error)?;
@@ -891,16 +900,21 @@ impl EmailMfaCodeRepository for PostgresEmailMfaCodeRepository {
     async fn invalidate_active_codes_for_user(
         &self,
         user_id: Uuid,
+        purpose: EmailMfaCodePurpose,
         invalidated_at: DateTime<Utc>,
     ) -> Result<(), AuthError> {
         sqlx::query(
             r#"
             UPDATE email_mfa_codes
-            SET invalidated_at = $2
-            WHERE user_id = $1 AND consumed_at IS NULL AND invalidated_at IS NULL
+            SET invalidated_at = $3
+            WHERE user_id = $1
+              AND purpose = $2
+              AND consumed_at IS NULL
+              AND invalidated_at IS NULL
             "#,
         )
         .bind(user_id)
+        .bind(purpose.as_str())
         .bind(invalidated_at)
         .execute(&self.pool)
         .await

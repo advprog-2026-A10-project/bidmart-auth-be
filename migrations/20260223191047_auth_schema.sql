@@ -82,10 +82,12 @@ CREATE TABLE IF NOT EXISTS email_mfa_codes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     code_hash VARCHAR(255) UNIQUE NOT NULL,
+    purpose VARCHAR(20) NOT NULL DEFAULT 'login',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expired_at TIMESTAMP WITH TIME ZONE NOT NULL,
     consumed_at TIMESTAMP WITH TIME ZONE,
-    invalidated_at TIMESTAMP WITH TIME ZONE
+    invalidated_at TIMESTAMP WITH TIME ZONE,
+    CONSTRAINT chk_email_mfa_codes_purpose CHECK (purpose IN ('login', 'setup'))
 );
 
 CREATE TABLE IF NOT EXISTS totp_setups (
@@ -125,4 +127,5 @@ CREATE INDEX IF NOT EXISTS idx_mfa_tickets_hash ON mfa_tickets(ticket_hash);
 CREATE INDEX IF NOT EXISTS idx_mfa_tickets_user_id ON mfa_tickets(user_id);
 CREATE INDEX IF NOT EXISTS idx_email_mfa_codes_hash ON email_mfa_codes(code_hash);
 CREATE INDEX IF NOT EXISTS idx_email_mfa_codes_user_id ON email_mfa_codes(user_id);
+CREATE INDEX IF NOT EXISTS idx_email_mfa_codes_user_purpose ON email_mfa_codes(user_id, purpose);
 CREATE INDEX IF NOT EXISTS idx_totp_setups_hash ON totp_setups(setup_ticket_hash);

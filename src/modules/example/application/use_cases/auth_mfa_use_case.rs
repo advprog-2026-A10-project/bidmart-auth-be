@@ -14,7 +14,8 @@ use crate::modules::auth::application::dto::{
 };
 use crate::modules::auth::application::use_cases::policy::AuthPolicy;
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, MfaTicket, NotificationPreferences, TotpSetup, User,
+    AuthSession, EmailMfaCode, EmailMfaCodePurpose, MfaTicket, NotificationPreferences, TotpSetup,
+    User,
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
@@ -141,7 +142,7 @@ impl AuthMfaUseCase {
         let now = self.clock.now();
         if let Some(active_code) = self
             .email_mfa_code_repository
-            .find_latest_active_by_user_id(user.id)
+            .find_latest_active_by_user_id(user.id, EmailMfaCodePurpose::Login)
             .await?
         {
             if active_code.created_at + self.policy.email_mfa_cooldown > now {
@@ -150,7 +151,7 @@ impl AuthMfaUseCase {
         }
 
         self.email_mfa_code_repository
-            .invalidate_active_codes_for_user(user.id, now)
+            .invalidate_active_codes_for_user(user.id, EmailMfaCodePurpose::Login, now)
             .await?;
 
         let raw_code = self.token_generator.generate()?;
@@ -160,6 +161,7 @@ impl AuthMfaUseCase {
                 Uuid::new_v4(),
                 user.id,
                 code_hash,
+                EmailMfaCodePurpose::Login,
                 now,
                 now + self.policy.email_mfa_code_ttl,
             ))
@@ -189,7 +191,7 @@ impl AuthMfaUseCase {
             .await?
             .ok_or(AuthError::MfaCodeInvalid)?;
 
-        if code.user_id != user.id {
+        if code.user_id != user.id || code.purpose != EmailMfaCodePurpose::Login {
             return Err(AuthError::MfaCodeInvalid);
         }
         if code.consumed_at.is_some() || code.invalidated_at.is_some() {
@@ -304,6 +306,9 @@ impl AuthMfaUseCase {
         let password_hash = self.password_hasher.hash(&command.new_password)?;
         self.user_repository
             .update_password_hash(user.id, password_hash, self.clock.now())
+            .await?;
+        self.session_repository
+            .revoke_all_other_sessions(user.id, auth.session_jti_hash.as_deref(), self.clock.now())
             .await?;
         Ok(MessageResponseDto {
             message: "Password changed.".to_string(),
@@ -480,7 +485,7 @@ impl AuthMfaUseCase {
         let now = self.clock.now();
         if let Some(active_code) = self
             .email_mfa_code_repository
-            .find_latest_active_by_user_id(user.id)
+            .find_latest_active_by_user_id(user.id, EmailMfaCodePurpose::Setup)
             .await?
         {
             if active_code.created_at + self.policy.email_mfa_cooldown > now {
@@ -489,7 +494,7 @@ impl AuthMfaUseCase {
         }
 
         self.email_mfa_code_repository
-            .invalidate_active_codes_for_user(user.id, now)
+            .invalidate_active_codes_for_user(user.id, EmailMfaCodePurpose::Setup, now)
             .await?;
         let raw_code = self.token_generator.generate()?;
         let code_hash = self.token_hasher.hash(&raw_code)?;
@@ -498,6 +503,7 @@ impl AuthMfaUseCase {
                 Uuid::new_v4(),
                 user.id,
                 code_hash,
+                EmailMfaCodePurpose::Setup,
                 now,
                 now + self.policy.email_mfa_code_ttl,
             ))
@@ -522,7 +528,7 @@ impl AuthMfaUseCase {
             .find_by_code_hash(&code_hash)
             .await?
             .ok_or(AuthError::MfaCodeInvalid)?;
-        if code.user_id != user.id {
+        if code.user_id != user.id || code.purpose != EmailMfaCodePurpose::Setup {
             return Err(AuthError::MfaCodeInvalid);
         }
         if code.consumed_at.is_some() || code.invalidated_at.is_some() {
