@@ -39,8 +39,23 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     jti_hash VARCHAR(255) UNIQUE NOT NULL,
     mfa_satisfied BOOLEAN NOT NULL DEFAULT false,
+    device VARCHAR(255) NOT NULL DEFAULT 'Unknown device',
+    browser VARCHAR(255) NOT NULL DEFAULT 'Unknown browser',
+    os VARCHAR(255) NOT NULL DEFAULT 'Unknown OS',
+    ip VARCHAR(64) NOT NULL DEFAULT 'Unknown IP',
+    location VARCHAR(255) NOT NULL DEFAULT 'Unknown location',
     expired_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_active_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    email_notifications BOOLEAN NOT NULL DEFAULT true,
+    push_notifications BOOLEAN NOT NULL DEFAULT true,
+    marketing_emails BOOLEAN NOT NULL DEFAULT false,
+    security_alerts BOOLEAN NOT NULL DEFAULT true,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS tokens (

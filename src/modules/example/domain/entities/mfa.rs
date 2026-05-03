@@ -75,7 +75,13 @@ pub struct AuthSession {
     pub user_id: Uuid,
     pub jti_hash: String,
     pub mfa_satisfied: bool,
+    pub device: String,
+    pub browser: String,
+    pub os: String,
+    pub ip: String,
+    pub location: String,
     pub created_at: DateTime<Utc>,
+    pub last_active_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
 }
 
@@ -93,5 +99,24 @@ pub struct TotpSetup {
 impl TotpSetup {
     pub fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
         self.expires_at <= now
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationPreferences {
+    pub email_notifications: bool,
+    pub push_notifications: bool,
+    pub marketing_emails: bool,
+    pub security_alerts: bool,
+}
+
+impl Default for NotificationPreferences {
+    fn default() -> Self {
+        Self {
+            email_notifications: true,
+            push_notifications: true,
+            marketing_emails: false,
+            security_alerts: true,
+        }
     }
 }

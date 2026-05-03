@@ -17,16 +17,16 @@ use crate::modules::auth::application::use_cases::register_user_use_case::Regist
 use crate::modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
 use crate::modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, PasswordResetToken, TotpSetup,
-    User, UserStatus,
+    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, NotificationPreferences,
+    PasswordResetToken, TotpSetup, User, UserStatus,
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
     Clock, EmailMfaCodeRepository, EmailVerificationTokenRepository, JwtService, MfaEmailSender,
-    MfaTicketRepository, PasswordHasher, PasswordResetCompletionRepository,
-    PasswordResetEmailSender, PasswordResetTokenRepository, PasswordVerifier, SessionRepository,
-    TotpService, TotpSetupRepository, UserRepository, VerificationEmailSender,
-    VerificationTokenGenerator, VerificationTokenHasher,
+    MfaTicketRepository, NotificationPreferencesRepository, PasswordHasher,
+    PasswordResetCompletionRepository, PasswordResetEmailSender, PasswordResetTokenRepository,
+    PasswordVerifier, SessionRepository, TotpService, TotpSetupRepository, UserRepository,
+    VerificationEmailSender, VerificationTokenGenerator, VerificationTokenHasher,
 };
 
 pub fn fixed_now() -> DateTime<Utc> {
@@ -284,6 +284,69 @@ impl UserRepository for FakeUserRepository {
             user.mfa_email_enabled = false;
             user.mfa_totp_enabled = false;
             user.mfa_totp_secret = None;
+            user.updated_at = updated_at;
+            updated_user = Some(user.clone());
+        }
+        if let Some(user) = updated_user {
+            state.users_by_email.insert(user.email.clone(), user);
+            Ok(())
+        } else {
+            Err(AuthError::UserNotFound)
+        }
+    }
+
+    async fn update_profile(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        address: &str,
+        postal_code: &str,
+        updated_at: DateTime<Utc>,
+    ) -> Result<User, AuthError> {
+        let normalized_name = crate::modules::auth::domain::entities::user::normalize_name(name)
+            .ok_or(AuthError::InvalidName)?;
+        let mut parts = normalized_name.splitn(2, ' ');
+        let mut state = self.state.lock().expect("state lock poisoned");
+        let mut updated_user: Option<User> = None;
+        if let Some(user) = state.users_by_id.get_mut(&user_id) {
+            user.first_name = parts.next().unwrap_or_default().to_string();
+            user.last_name = parts.next().map(str::to_string);
+            user.address = address.to_string();
+            user.postal_code = postal_code.to_string();
+            user.updated_at = updated_at;
+            updated_user = Some(user.clone());
+        }
+        if let Some(user) = updated_user {
+            state
+                .users_by_email
+                .insert(user.email.clone(), user.clone());
+            Ok(user)
+        } else {
+            Err(AuthError::UserNotFound)
+        }
+    }
+
+    async fn update_password_hash(
+        &self,
+        user_id: Uuid,
+        password_hash: String,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), AuthError> {
+        if let Some(err) = self
+            .update_password_hash_error
+            .lock()
+            .expect("error lock poisoned")
+            .clone()
+        {
+            return Err(err);
+        }
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state
+            .update_password_hash_calls
+            .push((user_id, password_hash.clone(), updated_at));
+        let mut updated_user: Option<User> = None;
+        if let Some(user) = state.users_by_id.get_mut(&user_id) {
+            user.password_hash = password_hash;
             user.updated_at = updated_at;
             updated_user = Some(user.clone());
         }
@@ -1093,6 +1156,113 @@ impl SessionRepository for FakeSessionRepository {
             .filter(|session| session.expires_at > now)
             .cloned())
     }
+
+    async fn list_active_by_user_id(
+        &self,
+        user_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<AuthSession>, AuthError> {
+        let state = self.state.lock().expect("state lock poisoned");
+        let mut sessions = state
+            .sessions_by_hash
+            .values()
+            .filter(|session| session.user_id == user_id && session.expires_at > now)
+            .cloned()
+            .collect::<Vec<_>>();
+        sessions.sort_by_key(|session| std::cmp::Reverse(session.last_active_at));
+        Ok(sessions)
+    }
+
+    async fn revoke_session(
+        &self,
+        user_id: Uuid,
+        session_id: Uuid,
+        current_jti_hash: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AuthError> {
+        if let Some(err) = self
+            .revoke_error
+            .lock()
+            .expect("error lock poisoned")
+            .clone()
+        {
+            return Err(err);
+        }
+        let mut state = self.state.lock().expect("state lock poisoned");
+        state.revoke_calls.push((session_id, now));
+        for session in state.sessions_by_hash.values_mut() {
+            if session.user_id == user_id
+                && session.id == session_id
+                && session.expires_at > now
+                && current_jti_hash != Some(session.jti_hash.as_str())
+            {
+                session.expires_at = now;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn revoke_all_other_sessions(
+        &self,
+        user_id: Uuid,
+        current_jti_hash: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<(), AuthError> {
+        if let Some(err) = self
+            .revoke_error
+            .lock()
+            .expect("error lock poisoned")
+            .clone()
+        {
+            return Err(err);
+        }
+        let mut state = self.state.lock().expect("state lock poisoned");
+        for session in state.sessions_by_hash.values_mut() {
+            if session.user_id == user_id
+                && session.expires_at > now
+                && current_jti_hash != Some(session.jti_hash.as_str())
+            {
+                session.expires_at = now;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FakeNotificationPreferencesRepositoryState {
+    pub preferences_by_user_id: HashMap<Uuid, NotificationPreferences>,
+}
+
+#[derive(Debug, Default)]
+pub struct FakeNotificationPreferencesRepository {
+    pub state: Mutex<FakeNotificationPreferencesRepositoryState>,
+}
+
+#[async_trait]
+impl NotificationPreferencesRepository for FakeNotificationPreferencesRepository {
+    async fn get_by_user_id(&self, user_id: Uuid) -> Result<NotificationPreferences, AuthError> {
+        let state = self.state.lock().expect("state lock poisoned");
+        Ok(state
+            .preferences_by_user_id
+            .get(&user_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn upsert(
+        &self,
+        user_id: Uuid,
+        preferences: NotificationPreferences,
+    ) -> Result<(), AuthError> {
+        self.state
+            .lock()
+            .expect("state lock poisoned")
+            .preferences_by_user_id
+            .insert(user_id, preferences);
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1438,7 +1608,9 @@ pub struct AuthUseCaseTestContext {
     pub mfa_ticket_repository: Arc<FakeMfaTicketRepository>,
     pub email_mfa_code_repository: Arc<FakeEmailMfaCodeRepository>,
     pub session_repository: Arc<FakeSessionRepository>,
+    pub notification_preferences_repository: Arc<FakeNotificationPreferencesRepository>,
     pub totp_setup_repository: Arc<FakeTotpSetupRepository>,
+    pub password_hasher: Arc<FakePasswordHasher>,
     pub jwt_issuer: Arc<FakeJwtIssuer>,
     pub totp_service: Arc<FakeTotpService>,
     pub clock: Arc<FixedClock>,
@@ -1456,7 +1628,11 @@ impl AuthUseCaseTestContext {
             mfa_ticket_repository: Arc::new(FakeMfaTicketRepository::default()),
             email_mfa_code_repository: Arc::new(FakeEmailMfaCodeRepository::default()),
             session_repository: Arc::new(FakeSessionRepository::default()),
+            notification_preferences_repository: Arc::new(
+                FakeNotificationPreferencesRepository::default(),
+            ),
             totp_setup_repository: Arc::new(FakeTotpSetupRepository::default()),
+            password_hasher: Arc::new(FakePasswordHasher::default()),
             jwt_issuer: Arc::new(FakeJwtIssuer::default()),
             totp_service: Arc::new(FakeTotpService::default()),
             clock: Arc::new(FixedClock::new(now)),
@@ -1470,7 +1646,9 @@ impl AuthUseCaseTestContext {
             self.mfa_ticket_repository.clone(),
             self.email_mfa_code_repository.clone(),
             self.session_repository.clone(),
+            self.notification_preferences_repository.clone(),
             self.totp_setup_repository.clone(),
+            self.password_hasher.clone(),
             self.password_verifier.clone(),
             self.token_generator.clone(),
             self.token_hasher.clone(),

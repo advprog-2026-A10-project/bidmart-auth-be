@@ -74,6 +74,87 @@ pub struct ResetPasswordResult {
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
+pub struct UpdateProfileCommand {
+    #[validate(length(min = 1, message = "Name is required"))]
+    pub name: String,
+    pub address: String,
+    #[serde(rename = "postalCode")]
+    pub postal_code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SettingsProfileUserDto {
+    pub id: Uuid,
+    pub name: String,
+    pub email: String,
+    pub address: String,
+    #[serde(rename = "postalCode")]
+    pub postal_code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SettingsProfileResponseDto {
+    pub user: SettingsProfileUserDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UpdateProfileResponseDto {
+    pub message: String,
+    pub user: SettingsProfileUserDto,
+}
+
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct ChangePasswordCommand {
+    #[serde(rename = "currentPassword")]
+    #[validate(length(min = 1, message = "Current password is required"))]
+    pub current_password: String,
+    #[serde(rename = "newPassword")]
+    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
+    pub new_password: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionDto {
+    pub id: Uuid,
+    pub device: String,
+    pub browser: String,
+    pub os: String,
+    pub ip: String,
+    pub location: String,
+    #[serde(rename = "lastActive")]
+    pub last_active: String,
+    #[serde(rename = "isCurrent")]
+    pub is_current: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionsResponseDto {
+    pub sessions: Vec<SessionDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationPreferencesDto {
+    #[serde(rename = "emailNotifications")]
+    pub email_notifications: bool,
+    #[serde(rename = "pushNotifications")]
+    pub push_notifications: bool,
+    #[serde(rename = "marketingEmails")]
+    pub marketing_emails: bool,
+    #[serde(rename = "securityAlerts")]
+    pub security_alerts: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NotificationPreferencesResponseDto {
+    pub preferences: NotificationPreferencesDto,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateNotificationPreferencesCommand {
+    pub preferences: NotificationPreferencesDto,
+}
+
+#[derive(Debug, Clone, Deserialize, Validate)]
 pub struct LoginCommand {
     #[validate(email(message = "Email must be a valid email address"))]
     pub email: String,
@@ -177,7 +258,7 @@ pub struct VerifyEmailMfaSetupCommand {
 
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct DisableMfaCommand {
-    #[serde(rename = "currentPassword")]
+    #[serde(rename = "currentPassword", alias = "password")]
     pub current_password: Option<String>,
 }
 
@@ -190,10 +271,6 @@ pub struct AuthenticatedUserContext {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MfaSettingsDto {
-    #[serde(rename = "emailEnabled")]
-    pub email_enabled: bool,
-    #[serde(rename = "totpEnabled")]
-    pub totp_enabled: bool,
     #[serde(rename = "mfaEnabled")]
     pub mfa_enabled: bool,
     #[serde(rename = "mfaType")]

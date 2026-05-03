@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::http::{header, HeaderValue, Method, StatusCode};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use serde_json::json;
 use tower_http::cors::CorsLayer;
@@ -129,6 +129,32 @@ pub fn create_router_with_cors_origins(state: AppState, allowed_origins: &[Strin
         .route(
             "/auth/mfa/verify-totp",
             post(controllers::verify_totp_mfa).options(cors_preflight),
+        )
+        .route(
+            "/settings/profile",
+            get(controllers::get_profile)
+                .put(controllers::update_profile)
+                .options(cors_preflight),
+        )
+        .route(
+            "/settings/security/password",
+            post(controllers::change_password).options(cors_preflight),
+        )
+        .route(
+            "/settings/security/sessions",
+            get(controllers::get_sessions)
+                .delete(controllers::revoke_all_sessions)
+                .options(cors_preflight),
+        )
+        .route(
+            "/settings/security/sessions/{session_id}",
+            delete(controllers::revoke_session).options(cors_preflight),
+        )
+        .route(
+            "/settings/notifications",
+            get(controllers::get_notification_preferences)
+                .put(controllers::update_notification_preferences)
+                .options(cors_preflight),
         )
         .route(
             "/settings/security/mfa",

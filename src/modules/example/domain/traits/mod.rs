@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::modules::auth::application::dto::{AuthenticatedUserContext, IssuedAccessToken};
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, PasswordResetToken, TotpSetup,
-    User,
+    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, NotificationPreferences,
+    PasswordResetToken, TotpSetup, User,
 };
 use crate::modules::auth::domain::errors::AuthError;
 
@@ -33,6 +33,20 @@ pub trait UserRepository: Send + Sync {
         updated_at: DateTime<Utc>,
     ) -> Result<(), AuthError>;
     async fn disable_mfa(&self, user_id: Uuid, updated_at: DateTime<Utc>) -> Result<(), AuthError>;
+    async fn update_profile(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        address: &str,
+        postal_code: &str,
+        updated_at: DateTime<Utc>,
+    ) -> Result<User, AuthError>;
+    async fn update_password_hash(
+        &self,
+        user_id: Uuid,
+        password_hash: String,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), AuthError>;
 }
 
 #[async_trait]
@@ -154,6 +168,34 @@ pub trait SessionRepository: Send + Sync {
         jti_hash: &str,
         now: DateTime<Utc>,
     ) -> Result<Option<AuthSession>, AuthError>;
+    async fn list_active_by_user_id(
+        &self,
+        user_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<AuthSession>, AuthError>;
+    async fn revoke_session(
+        &self,
+        user_id: Uuid,
+        session_id: Uuid,
+        current_jti_hash: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AuthError>;
+    async fn revoke_all_other_sessions(
+        &self,
+        user_id: Uuid,
+        current_jti_hash: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<(), AuthError>;
+}
+
+#[async_trait]
+pub trait NotificationPreferencesRepository: Send + Sync {
+    async fn get_by_user_id(&self, user_id: Uuid) -> Result<NotificationPreferences, AuthError>;
+    async fn upsert(
+        &self,
+        user_id: Uuid,
+        preferences: NotificationPreferences,
+    ) -> Result<(), AuthError>;
 }
 
 #[async_trait]

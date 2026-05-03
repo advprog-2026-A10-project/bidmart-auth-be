@@ -159,7 +159,13 @@ async fn reset_password_revokes_active_sessions_for_user() {
         user_id: user.id,
         jti_hash: "active-session".to_string(),
         mfa_satisfied: true,
+        device: "Test device".to_string(),
+        browser: "Test browser".to_string(),
+        os: "Test OS".to_string(),
+        ip: "127.0.0.1".to_string(),
+        location: "Test location".to_string(),
         created_at: fixed_now(),
+        last_active_at: fixed_now(),
         expires_at: fixed_now() + Duration::hours(1),
     });
 
@@ -241,7 +247,13 @@ async fn reset_password_session_revoke_failure_rolls_back_token_and_password_cha
         user_id: user.id,
         jti_hash: "active-session".to_string(),
         mfa_satisfied: true,
+        device: "Test device".to_string(),
+        browser: "Test browser".to_string(),
+        os: "Test OS".to_string(),
+        ip: "127.0.0.1".to_string(),
+        location: "Test location".to_string(),
         created_at: fixed_now(),
+        last_active_at: fixed_now(),
         expires_at: fixed_now() + Duration::hours(1),
     });
     *context

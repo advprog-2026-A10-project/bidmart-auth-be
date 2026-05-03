@@ -58,6 +58,8 @@ pub enum AuthError {
     TotpSetupInvalid,
     #[error("session invalid")]
     SessionInvalid,
+    #[error("session not found")]
+    SessionNotFound,
     #[error("dependency failure: {0}")]
     DependencyFailure(String),
 }

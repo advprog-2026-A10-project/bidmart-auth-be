@@ -5,14 +5,14 @@ use sqlx::{Row, Transaction};
 use uuid::Uuid;
 
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, PasswordResetToken, TotpSetup,
-    User, UserStatus,
+    AuthSession, EmailMfaCode, EmailVerificationToken, MfaTicket, NotificationPreferences,
+    PasswordResetToken, TotpSetup, User, UserStatus,
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
     EmailMfaCodeRepository, EmailVerificationTokenRepository, MfaTicketRepository,
-    PasswordResetCompletionRepository, PasswordResetTokenRepository, SessionRepository,
-    TotpSetupRepository, UserRepository,
+    NotificationPreferencesRepository, PasswordResetCompletionRepository,
+    PasswordResetTokenRepository, SessionRepository, TotpSetupRepository, UserRepository,
 };
 
 #[derive(Clone)]
@@ -30,6 +30,8 @@ impl PostgresUserRepository {
             id: row.get("id"),
             first_name: row.get("first_name"),
             last_name: row.get("last_name"),
+            address: row.get("address"),
+            postal_code: row.get("postal_code"),
             email: row.get("email"),
             password_hash: row.get("password_hash"),
             status: UserStatus::from_db_value(row.get::<String, _>("status").as_str()),
@@ -52,6 +54,8 @@ impl UserRepository for PostgresUserRepository {
                 u.id,
                 COALESCE(p.first_name, '') AS first_name,
                 p.last_name,
+                COALESCE(p.address, '') AS address,
+                COALESCE(p.postal_code, '') AS postal_code,
                 u.email,
                 u.password_hash,
                 u.status::text AS status,
@@ -121,6 +125,8 @@ impl UserRepository for PostgresUserRepository {
                 u.id,
                 COALESCE(p.first_name, '') AS first_name,
                 p.last_name,
+                COALESCE(p.address, '') AS address,
+                COALESCE(p.postal_code, '') AS postal_code,
                 u.email,
                 u.password_hash,
                 u.status::text AS status,
@@ -246,6 +252,67 @@ impl UserRepository for PostgresUserRepository {
             "#,
         )
         .bind(user_id)
+        .bind(updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(map_database_error)?
+        .rows_affected();
+
+        if rows_affected == 0 {
+            return Err(AuthError::UserNotFound);
+        }
+
+        Ok(())
+    }
+
+    async fn update_profile(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        address: &str,
+        postal_code: &str,
+        updated_at: DateTime<Utc>,
+    ) -> Result<User, AuthError> {
+        let mut user = self
+            .find_by_id(user_id)
+            .await?
+            .ok_or(AuthError::UserNotFound)?;
+        let normalized_name = crate::modules::auth::domain::entities::user::normalize_name(name)
+            .ok_or(AuthError::InvalidName)?;
+        let mut parts = normalized_name.splitn(2, ' ');
+        user.first_name = parts.next().unwrap_or_default().to_string();
+        user.last_name = parts.next().map(str::to_string);
+        user.address = address.trim().to_string();
+        user.postal_code = postal_code.trim().to_string();
+        user.updated_at = updated_at;
+
+        let mut transaction = self.pool.begin().await.map_err(map_database_error)?;
+        insert_or_update_profile(&mut transaction, &user).await?;
+        sqlx::query("UPDATE users SET updated_at = $2 WHERE id = $1")
+            .bind(user_id)
+            .bind(updated_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(map_database_error)?;
+        transaction.commit().await.map_err(map_database_error)?;
+        Ok(user)
+    }
+
+    async fn update_password_hash(
+        &self,
+        user_id: Uuid,
+        password_hash: String,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), AuthError> {
+        let rows_affected = sqlx::query(
+            r#"
+            UPDATE users
+            SET password_hash = $2, updated_at = $3
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .bind(password_hash)
         .bind(updated_at)
         .execute(&self.pool)
         .await
@@ -611,17 +678,21 @@ async fn insert_or_update_profile(
 ) -> Result<(), AuthError> {
     sqlx::query(
         r#"
-        INSERT INTO user_profiles (user_id, first_name, last_name)
-        VALUES ($1, $2, $3)
+        INSERT INTO user_profiles (user_id, first_name, last_name, address, postal_code)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (user_id) DO UPDATE
         SET
             first_name = EXCLUDED.first_name,
-            last_name = EXCLUDED.last_name
+            last_name = EXCLUDED.last_name,
+            address = EXCLUDED.address,
+            postal_code = EXCLUDED.postal_code
         "#,
     )
     .bind(user.id)
     .bind(&user.first_name)
     .bind(&user.last_name)
+    .bind(&user.address)
+    .bind(&user.postal_code)
     .execute(&mut **transaction)
     .await
     .map_err(map_database_error)?;
@@ -847,6 +918,23 @@ impl PostgresSessionRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+
+    fn row_to_session(row: sqlx::postgres::PgRow) -> AuthSession {
+        AuthSession {
+            id: row.get("id"),
+            user_id: row.get("user_id"),
+            jti_hash: row.get("jti_hash"),
+            mfa_satisfied: row.get("mfa_satisfied"),
+            device: row.get("device"),
+            browser: row.get("browser"),
+            os: row.get("os"),
+            ip: row.get("ip"),
+            location: row.get("location"),
+            created_at: row.get("created_at"),
+            last_active_at: row.get("last_active_at"),
+            expires_at: row.get("expired_at"),
+        }
+    }
 }
 
 #[async_trait]
@@ -855,16 +943,23 @@ impl SessionRepository for PostgresSessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, user_id, jti_hash, mfa_satisfied, expired_at, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6)
+                id, user_id, jti_hash, mfa_satisfied, device, browser, os, ip, location,
+                expired_at, created_at, last_active_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
         )
         .bind(session.id)
         .bind(session.user_id)
         .bind(session.jti_hash)
         .bind(session.mfa_satisfied)
+        .bind(session.device)
+        .bind(session.browser)
+        .bind(session.os)
+        .bind(session.ip)
+        .bind(session.location)
         .bind(session.expires_at)
         .bind(session.created_at)
+        .bind(session.last_active_at)
         .execute(&self.pool)
         .await
         .map_err(map_database_error)?;
@@ -878,7 +973,9 @@ impl SessionRepository for PostgresSessionRepository {
     ) -> Result<Option<AuthSession>, AuthError> {
         let row = sqlx::query(
             r#"
-            SELECT id, user_id, jti_hash, mfa_satisfied, created_at, expired_at
+            SELECT
+                id, user_id, jti_hash, mfa_satisfied, device, browser, os, ip, location,
+                created_at, last_active_at, expired_at
             FROM sessions
             WHERE jti_hash = $1 AND expired_at > $2
             "#,
@@ -888,14 +985,150 @@ impl SessionRepository for PostgresSessionRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(map_database_error)?;
-        Ok(row.map(|row| AuthSession {
-            id: row.get("id"),
-            user_id: row.get("user_id"),
-            jti_hash: row.get("jti_hash"),
-            mfa_satisfied: row.get("mfa_satisfied"),
-            created_at: row.get("created_at"),
-            expires_at: row.get("expired_at"),
-        }))
+        Ok(row.map(Self::row_to_session))
+    }
+
+    async fn list_active_by_user_id(
+        &self,
+        user_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<AuthSession>, AuthError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                id, user_id, jti_hash, mfa_satisfied, device, browser, os, ip, location,
+                created_at, last_active_at, expired_at
+            FROM sessions
+            WHERE user_id = $1 AND expired_at > $2
+            ORDER BY last_active_at DESC
+            "#,
+        )
+        .bind(user_id)
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_database_error)?;
+        Ok(rows.into_iter().map(Self::row_to_session).collect())
+    }
+
+    async fn revoke_session(
+        &self,
+        user_id: Uuid,
+        session_id: Uuid,
+        current_jti_hash: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AuthError> {
+        let rows_affected = sqlx::query(
+            r#"
+            UPDATE sessions
+            SET expired_at = $3
+            WHERE
+                user_id = $1
+                AND id = $2
+                AND expired_at > $3
+                AND ($4::text IS NULL OR jti_hash <> $4)
+            "#,
+        )
+        .bind(user_id)
+        .bind(session_id)
+        .bind(now)
+        .bind(current_jti_hash)
+        .execute(&self.pool)
+        .await
+        .map_err(map_database_error)?
+        .rows_affected();
+        Ok(rows_affected == 1)
+    }
+
+    async fn revoke_all_other_sessions(
+        &self,
+        user_id: Uuid,
+        current_jti_hash: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<(), AuthError> {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET expired_at = $2
+            WHERE
+                user_id = $1
+                AND expired_at > $2
+                AND ($3::text IS NULL OR jti_hash <> $3)
+            "#,
+        )
+        .bind(user_id)
+        .bind(now)
+        .bind(current_jti_hash)
+        .execute(&self.pool)
+        .await
+        .map_err(map_database_error)?;
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct PostgresNotificationPreferencesRepository {
+    pool: PgPool,
+}
+
+impl PostgresNotificationPreferencesRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl NotificationPreferencesRepository for PostgresNotificationPreferencesRepository {
+    async fn get_by_user_id(&self, user_id: Uuid) -> Result<NotificationPreferences, AuthError> {
+        let row = sqlx::query(
+            r#"
+            SELECT email_notifications, push_notifications, marketing_emails, security_alerts
+            FROM notification_preferences
+            WHERE user_id = $1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_database_error)?;
+
+        Ok(row
+            .map(|row| NotificationPreferences {
+                email_notifications: row.get("email_notifications"),
+                push_notifications: row.get("push_notifications"),
+                marketing_emails: row.get("marketing_emails"),
+                security_alerts: row.get("security_alerts"),
+            })
+            .unwrap_or_default())
+    }
+
+    async fn upsert(
+        &self,
+        user_id: Uuid,
+        preferences: NotificationPreferences,
+    ) -> Result<(), AuthError> {
+        sqlx::query(
+            r#"
+            INSERT INTO notification_preferences (
+                user_id, email_notifications, push_notifications, marketing_emails, security_alerts
+            ) VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id) DO UPDATE SET
+                email_notifications = EXCLUDED.email_notifications,
+                push_notifications = EXCLUDED.push_notifications,
+                marketing_emails = EXCLUDED.marketing_emails,
+                security_alerts = EXCLUDED.security_alerts,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(user_id)
+        .bind(preferences.email_notifications)
+        .bind(preferences.push_notifications)
+        .bind(preferences.marketing_emails)
+        .bind(preferences.security_alerts)
+        .execute(&self.pool)
+        .await
+        .map_err(map_database_error)?;
+        Ok(())
     }
 }
 

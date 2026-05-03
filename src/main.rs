@@ -24,8 +24,9 @@ use modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUse
 use modules::auth::infrastructure::create_router_with_cors_origins;
 use modules::auth::infrastructure::repositories::{
     PostgresEmailMfaCodeRepository, PostgresEmailVerificationTokenRepository,
-    PostgresMfaTicketRepository, PostgresPasswordResetTokenRepository, PostgresSessionRepository,
-    PostgresTotpSetupRepository, PostgresUserRepository,
+    PostgresMfaTicketRepository, PostgresNotificationPreferencesRepository,
+    PostgresPasswordResetTokenRepository, PostgresSessionRepository, PostgresTotpSetupRepository,
+    PostgresUserRepository,
 };
 use modules::auth::infrastructure::services::{
     Hs256JwtService, RandomVerificationTokenGenerator, ResendVerificationEmailSender,
@@ -50,6 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mfa_ticket_repository = Arc::new(PostgresMfaTicketRepository::new(pool.clone()));
     let email_mfa_code_repository = Arc::new(PostgresEmailMfaCodeRepository::new(pool.clone()));
     let session_repository = Arc::new(PostgresSessionRepository::new(pool.clone()));
+    let notification_preferences_repository =
+        Arc::new(PostgresNotificationPreferencesRepository::new(pool.clone()));
     let totp_setup_repository = Arc::new(PostgresTotpSetupRepository::new(pool));
     let password_hasher = Arc::new(ScryptPasswordHasher);
     let token_generator = Arc::new(RandomVerificationTokenGenerator);
@@ -128,7 +131,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mfa_ticket_repository,
         email_mfa_code_repository,
         session_repository.clone(),
+        notification_preferences_repository,
         totp_setup_repository,
+        password_hasher.clone(),
         password_hasher.clone(),
         token_generator,
         token_hasher,

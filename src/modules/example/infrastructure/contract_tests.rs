@@ -72,7 +72,13 @@ fn seed_authenticated_session(context: &AuthUseCaseTestContext, user_id: uuid::U
         user_id,
         jti_hash: FakeTokenHasher::deterministic_hash(&token),
         mfa_satisfied: true,
+        device: "Test device".to_string(),
+        browser: "Test browser".to_string(),
+        os: "Test OS".to_string(),
+        ip: "127.0.0.1".to_string(),
+        location: "Test location".to_string(),
         created_at: now,
+        last_active_at: now,
         expires_at: now + Duration::hours(1),
     };
     context
@@ -622,8 +628,6 @@ async fn protected_settings_mfa_endpoints_require_bearer_and_return_contracts() 
     assert_eq!(
         response_json(settings).await,
         json!({
-            "emailEnabled": false,
-            "totpEnabled": false,
             "mfaEnabled": false,
             "mfaType": null
         })
@@ -723,7 +727,7 @@ async fn protected_settings_mfa_endpoints_require_bearer_and_return_contracts() 
                 .header("authorization", format!("Bearer {bearer}"))
                 .header(CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "currentPassword": "correct-password" }).to_string(),
+                    json!({ "password": "correct-password" }).to_string(),
                 ))
                 .expect("request"),
         )
@@ -765,11 +769,227 @@ async fn settings_mfa_status_returns_pdf_compatible_enabled_fields() {
         assert_eq!(
             response_json(response).await,
             json!({
-                "emailEnabled": email_enabled,
-                "totpEnabled": totp_enabled,
                 "mfaEnabled": true,
                 "mfaType": expected_type
             })
         );
     }
+}
+
+#[tokio::test]
+async fn protected_settings_panel_endpoints_require_bearer_and_return_contracts() {
+    let context = AuthUseCaseTestContext::default();
+    let user = verified_auth_user("settings-panel@example.com");
+    context.user_repository.insert_user(user.clone());
+    context
+        .password_verifier
+        .accept("correct-password", "hash::correct-password");
+    let bearer = seed_authenticated_session(&context, user.id);
+    let app = auth_test_router(&context);
+
+    let unauthorized = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/settings/profile")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let profile = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/settings/profile")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(profile.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(profile).await,
+        json!({
+            "user": {
+                "id": user.id,
+                "name": "Contract Auth",
+                "email": "settings-panel@example.com",
+                "address": "",
+                "postalCode": ""
+            }
+        })
+    );
+
+    let update_profile = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/settings/profile")
+                .header("authorization", format!("Bearer {bearer}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "name": "Alice Updated",
+                        "address": "Jl. BidMart 2",
+                        "postalCode": "54321"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(update_profile.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(update_profile).await["user"]["postalCode"],
+        "54321"
+    );
+
+    let password = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/settings/security/password")
+                .header("authorization", format!("Bearer {bearer}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "currentPassword": "correct-password",
+                        "newPassword": "new-password"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(password.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(password).await,
+        json!({ "message": "Password changed." })
+    );
+
+    let sessions = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/settings/security/sessions")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(sessions.status(), StatusCode::OK);
+    let sessions_body = response_json(sessions).await;
+    assert_eq!(sessions_body["sessions"][0]["isCurrent"], true);
+
+    let notifications = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/settings/notifications")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(notifications.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(notifications).await,
+        json!({
+            "preferences": {
+                "emailNotifications": true,
+                "pushNotifications": true,
+                "marketingEmails": false,
+                "securityAlerts": true
+            }
+        })
+    );
+
+    let update_notifications = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/settings/notifications")
+                .header("authorization", format!("Bearer {bearer}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "preferences": {
+                            "emailNotifications": false,
+                            "pushNotifications": true,
+                            "marketingEmails": true,
+                            "securityAlerts": true
+                        }
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(update_notifications.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(update_notifications).await,
+        json!({ "message": "Notification preferences updated." })
+    );
+}
+
+#[tokio::test]
+async fn settings_panel_error_statuses_follow_contract() {
+    let context = AuthUseCaseTestContext::default();
+    let user = verified_auth_user("settings-errors@example.com");
+    context.user_repository.insert_user(user.clone());
+    context
+        .password_verifier
+        .reject("wrong-password", "hash::correct-password");
+    let bearer = seed_authenticated_session(&context, user.id);
+    let app = auth_test_router(&context);
+
+    let password = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/settings/security/password")
+                .header("authorization", format!("Bearer {bearer}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "currentPassword": "wrong-password",
+                        "newPassword": "new-password"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(password.status(), StatusCode::UNAUTHORIZED);
+
+    let missing_session = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/settings/security/sessions/00000000-0000-0000-0000-000000000000")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(missing_session.status(), StatusCode::NOT_FOUND);
 }

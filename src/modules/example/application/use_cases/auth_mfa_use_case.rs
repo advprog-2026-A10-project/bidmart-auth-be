@@ -4,20 +4,24 @@ use uuid::Uuid;
 use validator::ValidateEmail;
 
 use crate::modules::auth::application::dto::{
-    AuthTokenResult, AuthenticatedLoginResult, AuthenticatedUserContext, DisableMfaCommand,
-    LoginCommand, LoginOutcome, MfaSettingsDto, SendEmailMfaCommand, SetupEmailMfaCommand,
-    SetupTotpCommand, SetupTotpResult, VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand,
-    VerifyTotpMfaCommand, VerifyTotpSetupCommand,
+    AuthTokenResult, AuthenticatedLoginResult, AuthenticatedUserContext, ChangePasswordCommand,
+    DisableMfaCommand, LoginCommand, LoginOutcome, MessageResponseDto, MfaSettingsDto,
+    NotificationPreferencesDto, NotificationPreferencesResponseDto, SendEmailMfaCommand,
+    SessionDto, SessionsResponseDto, SettingsProfileResponseDto, SettingsProfileUserDto,
+    SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult, UpdateNotificationPreferencesCommand,
+    UpdateProfileCommand, UpdateProfileResponseDto, VerifyEmailMfaCommand,
+    VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand, VerifyTotpSetupCommand,
 };
 use crate::modules::auth::application::use_cases::policy::AuthPolicy;
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, MfaTicket, TotpSetup, User,
+    AuthSession, EmailMfaCode, MfaTicket, NotificationPreferences, TotpSetup, User,
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
     Clock, EmailMfaCodeRepository, JwtService, MfaEmailSender, MfaTicketRepository,
-    PasswordVerifier, SessionRepository, TotpService, TotpSetupRepository, UserRepository,
-    VerificationTokenGenerator, VerificationTokenHasher,
+    NotificationPreferencesRepository, PasswordHasher, PasswordVerifier, SessionRepository,
+    TotpService, TotpSetupRepository, UserRepository, VerificationTokenGenerator,
+    VerificationTokenHasher,
 };
 
 pub struct AuthMfaUseCase {
@@ -25,7 +29,9 @@ pub struct AuthMfaUseCase {
     mfa_ticket_repository: Arc<dyn MfaTicketRepository>,
     email_mfa_code_repository: Arc<dyn EmailMfaCodeRepository>,
     session_repository: Arc<dyn SessionRepository>,
+    notification_preferences_repository: Arc<dyn NotificationPreferencesRepository>,
     totp_setup_repository: Arc<dyn TotpSetupRepository>,
+    password_hasher: Arc<dyn PasswordHasher>,
     password_verifier: Arc<dyn PasswordVerifier>,
     token_generator: Arc<dyn VerificationTokenGenerator>,
     token_hasher: Arc<dyn VerificationTokenHasher>,
@@ -43,7 +49,9 @@ impl AuthMfaUseCase {
         mfa_ticket_repository: Arc<dyn MfaTicketRepository>,
         email_mfa_code_repository: Arc<dyn EmailMfaCodeRepository>,
         session_repository: Arc<dyn SessionRepository>,
+        notification_preferences_repository: Arc<dyn NotificationPreferencesRepository>,
         totp_setup_repository: Arc<dyn TotpSetupRepository>,
+        password_hasher: Arc<dyn PasswordHasher>,
         password_verifier: Arc<dyn PasswordVerifier>,
         token_generator: Arc<dyn VerificationTokenGenerator>,
         token_hasher: Arc<dyn VerificationTokenHasher>,
@@ -58,7 +66,9 @@ impl AuthMfaUseCase {
             mfa_ticket_repository,
             email_mfa_code_repository,
             session_repository,
+            notification_preferences_repository,
             totp_setup_repository,
+            password_hasher,
             password_verifier,
             token_generator,
             token_hasher,
@@ -242,10 +252,150 @@ impl AuthMfaUseCase {
             None
         };
         Ok(MfaSettingsDto {
-            email_enabled: user.mfa_email_enabled,
-            totp_enabled: user.mfa_totp_enabled,
             mfa_enabled: user.mfa_email_enabled || user.mfa_totp_enabled,
             mfa_type,
+        })
+    }
+
+    pub async fn get_profile(
+        &self,
+        auth: AuthenticatedUserContext,
+    ) -> Result<SettingsProfileResponseDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        Ok(SettingsProfileResponseDto {
+            user: profile_dto(&user),
+        })
+    }
+
+    pub async fn update_profile(
+        &self,
+        auth: AuthenticatedUserContext,
+        command: UpdateProfileCommand,
+    ) -> Result<UpdateProfileResponseDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        let updated = self
+            .user_repository
+            .update_profile(
+                user.id,
+                &command.name,
+                &command.address,
+                &command.postal_code,
+                self.clock.now(),
+            )
+            .await?;
+        Ok(UpdateProfileResponseDto {
+            message: "Profile updated.".to_string(),
+            user: profile_dto(&updated),
+        })
+    }
+
+    pub async fn change_password(
+        &self,
+        auth: AuthenticatedUserContext,
+        command: ChangePasswordCommand,
+    ) -> Result<MessageResponseDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        if !self
+            .password_verifier
+            .verify(&command.current_password, &user.password_hash)?
+        {
+            return Err(AuthError::CurrentPasswordInvalid);
+        }
+        let password_hash = self.password_hasher.hash(&command.new_password)?;
+        self.user_repository
+            .update_password_hash(user.id, password_hash, self.clock.now())
+            .await?;
+        Ok(MessageResponseDto {
+            message: "Password changed.".to_string(),
+        })
+    }
+
+    pub async fn get_sessions(
+        &self,
+        auth: AuthenticatedUserContext,
+    ) -> Result<SessionsResponseDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        let current_jti_hash = auth.session_jti_hash.as_deref();
+        let sessions = self
+            .session_repository
+            .list_active_by_user_id(user.id, self.clock.now())
+            .await?
+            .into_iter()
+            .map(|session| SessionDto {
+                id: session.id,
+                device: session.device,
+                browser: session.browser,
+                os: session.os,
+                ip: session.ip,
+                location: session.location,
+                last_active: session.last_active_at.to_rfc3339(),
+                is_current: current_jti_hash == Some(session.jti_hash.as_str()),
+            })
+            .collect();
+        Ok(SessionsResponseDto { sessions })
+    }
+
+    pub async fn revoke_session(
+        &self,
+        auth: AuthenticatedUserContext,
+        session_id: Uuid,
+    ) -> Result<MessageResponseDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        let revoked = self
+            .session_repository
+            .revoke_session(
+                user.id,
+                session_id,
+                auth.session_jti_hash.as_deref(),
+                self.clock.now(),
+            )
+            .await?;
+        if !revoked {
+            return Err(AuthError::SessionNotFound);
+        }
+        Ok(MessageResponseDto {
+            message: "Session revoked.".to_string(),
+        })
+    }
+
+    pub async fn revoke_all_sessions(
+        &self,
+        auth: AuthenticatedUserContext,
+    ) -> Result<MessageResponseDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        self.session_repository
+            .revoke_all_other_sessions(user.id, auth.session_jti_hash.as_deref(), self.clock.now())
+            .await?;
+        Ok(MessageResponseDto {
+            message: "Sessions revoked.".to_string(),
+        })
+    }
+
+    pub async fn get_notification_preferences(
+        &self,
+        auth: AuthenticatedUserContext,
+    ) -> Result<NotificationPreferencesResponseDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        let preferences = self
+            .notification_preferences_repository
+            .get_by_user_id(user.id)
+            .await?;
+        Ok(NotificationPreferencesResponseDto {
+            preferences: preferences.into(),
+        })
+    }
+
+    pub async fn update_notification_preferences(
+        &self,
+        auth: AuthenticatedUserContext,
+        command: UpdateNotificationPreferencesCommand,
+    ) -> Result<MessageResponseDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        self.notification_preferences_repository
+            .upsert(user.id, command.preferences.into())
+            .await?;
+        Ok(MessageResponseDto {
+            message: "Notification preferences updated.".to_string(),
         })
     }
 
@@ -481,7 +631,13 @@ impl AuthMfaUseCase {
                 user_id: user.id,
                 jti_hash,
                 mfa_satisfied,
+                device: "Unknown device".to_string(),
+                browser: "Unknown browser".to_string(),
+                os: "Unknown OS".to_string(),
+                ip: "Unknown IP".to_string(),
+                location: "Unknown location".to_string(),
                 created_at: now,
+                last_active_at: now,
                 expires_at: session_expires_at,
             })
             .await?;
@@ -492,6 +648,38 @@ impl AuthMfaUseCase {
             email_verified: user.is_email_verified(),
             access_token: issued.token,
         })
+    }
+}
+
+fn profile_dto(user: &User) -> SettingsProfileUserDto {
+    SettingsProfileUserDto {
+        id: user.id,
+        name: user.display_name(),
+        email: user.email.clone(),
+        address: user.address.clone(),
+        postal_code: user.postal_code.clone(),
+    }
+}
+
+impl From<NotificationPreferences> for NotificationPreferencesDto {
+    fn from(preferences: NotificationPreferences) -> Self {
+        Self {
+            email_notifications: preferences.email_notifications,
+            push_notifications: preferences.push_notifications,
+            marketing_emails: preferences.marketing_emails,
+            security_alerts: preferences.security_alerts,
+        }
+    }
+}
+
+impl From<NotificationPreferencesDto> for NotificationPreferences {
+    fn from(preferences: NotificationPreferencesDto) -> Self {
+        Self {
+            email_notifications: preferences.email_notifications,
+            push_notifications: preferences.push_notifications,
+            marketing_emails: preferences.marketing_emails,
+            security_alerts: preferences.security_alerts,
+        }
     }
 }
 
