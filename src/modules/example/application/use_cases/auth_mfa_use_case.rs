@@ -260,6 +260,20 @@ impl AuthMfaUseCase {
         })
     }
 
+    pub async fn resolve_authenticated_user(
+        &self,
+        auth: AuthenticatedUserContext,
+    ) -> Result<PublicUserDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        let email_verified = user.is_email_verified();
+        Ok(PublicUserDto {
+            id: user.id,
+            name: user.display_name(),
+            email: user.email,
+            email_verified,
+        })
+    }
+
     pub async fn get_profile(
         &self,
         auth: AuthenticatedUserContext,
@@ -268,14 +282,6 @@ impl AuthMfaUseCase {
         Ok(SettingsProfileResponseDto {
             user: profile_dto(&user),
         })
-    }
-
-    pub async fn current_user(
-        &self,
-        auth: AuthenticatedUserContext,
-    ) -> Result<PublicUserDto, AuthError> {
-        let user = self.require_settings_user(&auth).await?;
-        Ok(public_user_dto(&user))
     }
 
     pub async fn update_profile(
@@ -382,27 +388,6 @@ impl AuthMfaUseCase {
             .await?;
         Ok(MessageResponseDto {
             message: "Sessions revoked.".to_string(),
-        })
-    }
-
-    pub async fn logout(
-        &self,
-        auth: AuthenticatedUserContext,
-    ) -> Result<MessageResponseDto, AuthError> {
-        let user = self.require_settings_user(&auth).await?;
-        let jti_hash = auth
-            .session_jti_hash
-            .as_deref()
-            .ok_or(AuthError::SessionInvalid)?;
-        let revoked = self
-            .session_repository
-            .revoke_current_session(user.id, jti_hash, self.clock.now())
-            .await?;
-        if !revoked {
-            return Err(AuthError::SessionInvalid);
-        }
-        Ok(MessageResponseDto {
-            message: "Logged out.".to_string(),
         })
     }
 
@@ -694,15 +679,6 @@ fn profile_dto(user: &User) -> SettingsProfileUserDto {
         email: user.email.clone(),
         address: user.address.clone(),
         postal_code: user.postal_code.clone(),
-    }
-}
-
-fn public_user_dto(user: &User) -> PublicUserDto {
-    PublicUserDto {
-        id: user.id,
-        name: user.display_name(),
-        email: user.email.clone(),
-        email_verified: user.is_email_verified(),
     }
 }
 

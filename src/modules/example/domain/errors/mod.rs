@@ -54,8 +54,6 @@ pub enum AuthError {
     Unauthorized,
     #[error("forbidden")]
     Forbidden,
-    #[error("too many attempts")]
-    TooManyAttempts,
     #[error("totp setup invalid")]
     TotpSetupInvalid,
     #[error("session invalid")]

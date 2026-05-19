@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
+use axum::http::header::SET_COOKIE;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -9,17 +10,21 @@ use serde::Serialize;
 use validator::{Validate, ValidationErrors};
 
 use crate::modules::auth::application::dto::{
-    AccessTokenResponseDto, AuthMeResponseDto, ChangePasswordCommand, DisableMfaCommand,
-    ForgotPasswordCommand, LoginCommand, LoginResponseDto, MessageResponseDto, MfaSettingsDto,
-    NotificationPreferencesResponseDto, RegisterResponseDto, RegisterUserCommand,
-    ResendVerificationCommand, ResetPasswordCommand, SendEmailMfaCommand, SessionsResponseDto,
-    SettingsProfileResponseDto, SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult,
-    UpdateNotificationPreferencesCommand, UpdateProfileCommand, UpdateProfileResponseDto,
-    VerifyEmailCommand, VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand,
-    VerifyTotpSetupCommand,
+    AccessTokenResponseDto, ChangePasswordCommand, DisableMfaCommand, ForgotPasswordCommand,
+    LoginCommand, LoginResponseDto, MessageResponseDto, MfaSettingsDto,
+    NotificationPreferencesResponseDto, RegisterRequestCommand, RegisterResponseDto,
+    RegisterUserCommand, ResendVerificationCommand, ResetPasswordCommand, SendEmailMfaCommand,
+    SessionsResponseDto, SettingsProfileResponseDto, SetupEmailMfaCommand, SetupTotpCommand,
+    SetupTotpResult, UpdateNotificationPreferencesCommand, UpdateProfileCommand,
+    UpdateProfileResponseDto, ValidateSessionResponseDto, VerifyEmailCommand,
+    VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand,
+    VerifyTotpSetupCommand, LOGOUT_SUCCESS_MESSAGE,
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::infrastructure::auth_extractor::AuthenticatedUser;
+use crate::modules::auth::infrastructure::session_cookie::{
+    build_clear_session_cookie, build_session_cookie,
+};
 use crate::modules::auth::infrastructure::AppState;
 use uuid::Uuid;
 
@@ -32,12 +37,13 @@ struct ErrorEnvelope {
 
 pub async fn register(
     State(state): State<AppState>,
-    payload: Result<Json<RegisterUserCommand>, JsonRejection>,
+    payload: Result<Json<RegisterRequestCommand>, JsonRejection>,
 ) -> Result<(StatusCode, Json<RegisterResponseDto>), ApiError> {
     let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
     command
         .validate()
         .map_err(ApiError::from_validation_errors)?;
+    let command = map_register_request_to_use_case(command)?;
 
     let result = state
         .register_use_case
@@ -69,30 +75,92 @@ pub async fn verify_email(
 pub async fn login(
     State(state): State<AppState>,
     payload: Result<Json<LoginCommand>, JsonRejection>,
-) -> Result<Json<LoginResponseDto>, ApiError> {
+) -> Result<Response, ApiError> {
     let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
     command
         .validate()
         .map_err(ApiError::from_validation_errors)?;
 
-    let limiter_key = login_limiter_key(&command.email);
-    let now = state.clock.now();
-    state
-        .auth_attempt_limiter
-        .check(&limiter_key, now)
+    let result = state
+        .auth_mfa_use_case
+        .login(command)
+        .await
         .map_err(ApiError::from_auth_error)?;
 
-    let result = state.auth_mfa_use_case.login(command).await;
-
-    match &result {
-        Ok(_) => state.auth_attempt_limiter.record_success(&limiter_key),
-        Err(AuthError::InvalidCredentials) => state
-            .auth_attempt_limiter
-            .record_failure(&limiter_key, state.clock.now()),
-        Err(_) => {}
+    let response = LoginResponseDto::from(result);
+    if response.requires_mfa {
+        return Ok(Json(response).into_response());
     }
 
-    Ok(Json(result.map_err(ApiError::from_auth_error)?.into()))
+    let access_token = response
+        .access_token
+        .as_deref()
+        .map(ToString::to_string)
+        .ok_or_else(|| ApiError::from_auth_error(AuthError::Unauthorized))?;
+    Ok(with_session_cookie(&state, &access_token, Json(response)))
+}
+
+pub async fn logout(
+    State(state): State<AppState>,
+    AuthenticatedUser(auth): AuthenticatedUser,
+) -> Result<Response, ApiError> {
+    let jti_hash = auth
+        .session_jti_hash
+        .as_deref()
+        .ok_or_else(|| ApiError::from_auth_error(AuthError::SessionInvalid))?;
+    let now = state.clock.now();
+    let session = state
+        .session_repository
+        .find_active_by_jti_hash(jti_hash, now)
+        .await
+        .map_err(ApiError::from_auth_error)?
+        .ok_or_else(|| ApiError::from_auth_error(AuthError::SessionInvalid))?;
+
+    let revoked = state
+        .session_repository
+        .revoke_session(auth.user_id, session.id, None, now)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    if !revoked {
+        return Err(ApiError::from_auth_error(AuthError::SessionInvalid));
+    }
+
+    Ok(with_clear_session_cookie(
+        &state,
+        Json(MessageResponseDto {
+            message: LOGOUT_SUCCESS_MESSAGE.to_string(),
+        }),
+    ))
+}
+
+pub async fn validate_session(
+    State(state): State<AppState>,
+    AuthenticatedUser(auth): AuthenticatedUser,
+) -> Result<Json<ValidateSessionResponseDto>, ApiError> {
+    let jti_hash = auth
+        .session_jti_hash
+        .as_deref()
+        .ok_or_else(|| ApiError::from_auth_error(AuthError::SessionInvalid))?;
+    let session = state
+        .session_repository
+        .find_active_by_jti_hash(jti_hash, state.clock.now())
+        .await
+        .map_err(ApiError::from_auth_error)?
+        .ok_or_else(|| ApiError::from_auth_error(AuthError::SessionInvalid))?;
+    let user = state
+        .auth_mfa_use_case
+        .resolve_authenticated_user(auth.clone())
+        .await
+        .map_err(ApiError::from_auth_error)?;
+
+    Ok(Json(ValidateSessionResponseDto {
+        user_id: user.id,
+        name: user.name,
+        email: user.email,
+        email_verified: user.email_verified,
+        mfa_satisfied: auth.mfa_satisfied,
+        session_expiry: session.expires_at.to_rfc3339(),
+    }))
 }
 
 pub async fn send_email_mfa(
@@ -116,67 +184,37 @@ pub async fn send_email_mfa(
 pub async fn verify_email_mfa(
     State(state): State<AppState>,
     payload: Result<Json<VerifyEmailMfaCommand>, JsonRejection>,
-) -> Result<Json<AccessTokenResponseDto>, ApiError> {
+) -> Result<Response, ApiError> {
     let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
     command
         .validate()
         .map_err(ApiError::from_validation_errors)?;
-    let limiter_key = mfa_limiter_key("email", &command.mfa_ticket);
-    let now = state.clock.now();
-    state
-        .auth_attempt_limiter
-        .check(&limiter_key, now)
+    let result = state
+        .auth_mfa_use_case
+        .verify_email_mfa(command)
+        .await
         .map_err(ApiError::from_auth_error)?;
-
-    let result = state.auth_mfa_use_case.verify_email_mfa(command).await;
-
-    match &result {
-        Ok(_) => state.auth_attempt_limiter.record_success(&limiter_key),
-        Err(AuthError::MfaCodeInvalid) => state
-            .auth_attempt_limiter
-            .record_failure(&limiter_key, state.clock.now()),
-        Err(_) => {}
-    }
-    Ok(Json(result.map_err(ApiError::from_auth_error)?.into()))
+    let response = AccessTokenResponseDto::from(result);
+    let access_token = response.access_token.clone();
+    Ok(with_session_cookie(&state, &access_token, Json(response)))
 }
 
 pub async fn verify_totp_mfa(
     State(state): State<AppState>,
     payload: Result<Json<VerifyTotpMfaCommand>, JsonRejection>,
-) -> Result<Json<AccessTokenResponseDto>, ApiError> {
+) -> Result<Response, ApiError> {
     let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
     command
         .validate()
         .map_err(ApiError::from_validation_errors)?;
-    let limiter_key = mfa_limiter_key("totp", &command.mfa_ticket);
-    let now = state.clock.now();
-    state
-        .auth_attempt_limiter
-        .check(&limiter_key, now)
-        .map_err(ApiError::from_auth_error)?;
-
-    let result = state.auth_mfa_use_case.verify_totp_mfa(command).await;
-
-    match &result {
-        Ok(_) => state.auth_attempt_limiter.record_success(&limiter_key),
-        Err(AuthError::MfaCodeInvalid) => state
-            .auth_attempt_limiter
-            .record_failure(&limiter_key, state.clock.now()),
-        Err(_) => {}
-    }
-    Ok(Json(result.map_err(ApiError::from_auth_error)?.into()))
-}
-
-pub async fn auth_me(
-    State(state): State<AppState>,
-    AuthenticatedUser(auth): AuthenticatedUser,
-) -> Result<Json<AuthMeResponseDto>, ApiError> {
-    let user = state
+    let result = state
         .auth_mfa_use_case
-        .current_user(auth)
+        .verify_totp_mfa(command)
         .await
         .map_err(ApiError::from_auth_error)?;
-    Ok(Json(AuthMeResponseDto { user }))
+    let response = AccessTokenResponseDto::from(result);
+    let access_token = response.access_token.clone();
+    Ok(with_session_cookie(&state, &access_token, Json(response)))
 }
 
 pub async fn get_mfa_settings(
@@ -272,18 +310,6 @@ pub async fn revoke_all_sessions(
         .await
         .map_err(ApiError::from_auth_error)?;
     Ok(Json(result))
-}
-
-pub async fn logout(
-    State(state): State<AppState>,
-    AuthenticatedUser(auth): AuthenticatedUser,
-) -> Result<StatusCode, ApiError> {
-    state
-        .auth_mfa_use_case
-        .logout(auth)
-        .await
-        .map_err(ApiError::from_auth_error)?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn get_notification_preferences(
@@ -611,10 +637,6 @@ impl ApiError {
                 status: StatusCode::FORBIDDEN,
                 message: "Forbidden.".to_string(),
             },
-            AuthError::TooManyAttempts => Self::Message {
-                status: StatusCode::TOO_MANY_REQUESTS,
-                message: "Too many attempts. Please wait before trying again.".to_string(),
-            },
             AuthError::DependencyFailure(_) => Self::Message {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 message: "Internal server error.".to_string(),
@@ -646,14 +668,131 @@ impl IntoResponse for ApiError {
     }
 }
 
+fn map_register_request_to_use_case(
+    command: RegisterRequestCommand,
+) -> Result<RegisterUserCommand, ApiError> {
+    let email = command.email.trim().to_string();
+    let password = command.password;
+
+    let first_name = command
+        .first_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+
+    let last_name = command
+        .last_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+
+    if let Some(first_name) = first_name {
+        let confirm_password = command
+            .confirm_password
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| ApiError::Validation {
+                message: "Validation error".to_string(),
+                errors: field_map("confirmPassword", "Confirm password is required"),
+            })?;
+
+        if confirm_password != password {
+            return Err(ApiError::Validation {
+                message: "Validation error".to_string(),
+                errors: field_map("confirmPassword", "Passwords do not match"),
+            });
+        }
+
+        let name = match last_name {
+            Some(last_name) => format!("{first_name} {last_name}"),
+            None => first_name,
+        };
+        return Ok(RegisterUserCommand {
+            name,
+            email,
+            password,
+        });
+    }
+
+    let legacy_name = command
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+
+    let legacy_name = match legacy_name {
+        Some(name) => name,
+        None if command.name.is_some() => {
+            return Err(ApiError::Validation {
+                message: "Validation error".to_string(),
+                errors: field_map("name", "Name is required"),
+            })
+        }
+        None => {
+            return Err(ApiError::Validation {
+                message: "Validation error".to_string(),
+                errors: field_map("firstName", "First name is required"),
+            })
+        }
+    };
+
+    if let Some(confirm_password) = command
+        .confirm_password
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if confirm_password != password {
+            return Err(ApiError::Validation {
+                message: "Validation error".to_string(),
+                errors: field_map("confirmPassword", "Passwords do not match"),
+            });
+        }
+    }
+
+    Ok(RegisterUserCommand {
+        name: legacy_name,
+        email,
+        password,
+    })
+}
+
+fn with_session_cookie(
+    state: &AppState,
+    access_token: &str,
+    payload: Json<impl Serialize>,
+) -> Response {
+    let mut response = payload.into_response();
+    let cookie = build_session_cookie(
+        &state.session_cookie_name,
+        access_token,
+        state.session_cookie_max_age_seconds,
+        &state.session_cookie_same_site,
+        state.session_cookie_secure,
+    );
+    if let Ok(value) = axum::http::HeaderValue::from_str(&cookie) {
+        response.headers_mut().append(SET_COOKIE, value);
+    }
+    response
+}
+
+fn with_clear_session_cookie(state: &AppState, payload: Json<impl Serialize>) -> Response {
+    let mut response = payload.into_response();
+    let cookie = build_clear_session_cookie(
+        &state.session_cookie_name,
+        &state.session_cookie_same_site,
+        state.session_cookie_secure,
+    );
+    if let Ok(value) = axum::http::HeaderValue::from_str(&cookie) {
+        response.headers_mut().append(SET_COOKIE, value);
+    }
+    response
+}
+
 fn field_map(field: &str, message: &str) -> BTreeMap<String, Vec<String>> {
     BTreeMap::from([(field.to_string(), vec![message.to_string()])])
-}
-
-fn login_limiter_key(email: &str) -> String {
-    format!("login:{}", email.trim().to_ascii_lowercase())
-}
-
-fn mfa_limiter_key(kind: &str, ticket: &str) -> String {
-    format!("mfa:{kind}:{}", ticket.trim())
 }

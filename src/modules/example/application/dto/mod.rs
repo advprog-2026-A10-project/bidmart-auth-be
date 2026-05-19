@@ -9,6 +9,22 @@ pub const RESEND_VERIFICATION_MESSAGE: &str =
 pub const FORGOT_PASSWORD_MESSAGE: &str =
     "If the account exists, a password reset email has been sent.";
 pub const RESET_PASSWORD_SUCCESS_MESSAGE: &str = "Password reset successful.";
+pub const LOGOUT_SUCCESS_MESSAGE: &str = "Logout successful.";
+
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct RegisterRequestCommand {
+    #[serde(rename = "firstName")]
+    pub first_name: Option<String>,
+    #[serde(rename = "lastName")]
+    pub last_name: Option<String>,
+    pub name: Option<String>,
+    #[validate(email(message = "Email must be a valid email address"))]
+    pub email: String,
+    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
+    pub password: String,
+    #[serde(rename = "confirmPassword")]
+    pub confirm_password: Option<String>,
+}
 
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct RegisterUserCommand {
@@ -294,11 +310,6 @@ pub struct PublicUserDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AuthMeResponseDto {
-    pub user: PublicUserDto,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RegisterResponseDto {
     pub user: PublicUserDto,
     pub message: String,
@@ -328,6 +339,17 @@ pub struct LoginResponseDto {
 pub struct AccessTokenResponseDto {
     pub user: PublicUserDto,
     pub access_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateSessionResponseDto {
+    pub user_id: Uuid,
+    pub name: String,
+    pub email: String,
+    pub email_verified: bool,
+    pub mfa_satisfied: bool,
+    pub session_expiry: String,
 }
 
 impl From<RegisterUserResult> for RegisterResponseDto {

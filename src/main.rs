@@ -6,10 +6,11 @@ use std::sync::Arc;
 
 use axum::serve;
 use chrono::Duration;
+use resend_rs::Resend;
 use std::path::Path;
 use tokio::net::TcpListener;
 
-use infrastructure::config::{AppConfig, EmailDeliveryMode};
+use infrastructure::config::AppConfig;
 use infrastructure::database::create_pool;
 use infrastructure::logger::init_tracer;
 use modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
@@ -28,9 +29,8 @@ use modules::auth::infrastructure::repositories::{
     PostgresUserRepository,
 };
 use modules::auth::infrastructure::services::{
-    BidMartEmailSender, Hs256JwtService, InMemoryAuthAttemptLimiter, LoggedEmailSender,
-    RandomVerificationTokenGenerator, ResendVerificationEmailSender, ScryptPasswordHasher,
-    Sha256VerificationTokenHasher, SystemClock, TotpRsService,
+    Hs256JwtService, RandomVerificationTokenGenerator, ResendVerificationEmailSender,
+    ScryptPasswordHasher, Sha256VerificationTokenHasher, SystemClock, TotpRsService,
 };
 use modules::auth::infrastructure::AppState;
 
@@ -54,31 +54,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let notification_preferences_repository =
         Arc::new(PostgresNotificationPreferencesRepository::new(pool.clone()));
     let totp_setup_repository = Arc::new(PostgresTotpSetupRepository::new(pool));
-    let auth_attempt_limiter = Arc::new(InMemoryAuthAttemptLimiter::new(
-        config.auth_attempt_limit_max_failures,
-        Duration::seconds(config.auth_attempt_limit_window_seconds),
-    ));
     let password_hasher = Arc::new(ScryptPasswordHasher);
     let token_generator = Arc::new(RandomVerificationTokenGenerator);
     let token_hasher = Arc::new(Sha256VerificationTokenHasher);
-    let email_sender = Arc::new(match config.email_delivery_mode {
-        EmailDeliveryMode::Resend => {
-            let resend_api_key = config
-                .resend_api_key
-                .as_deref()
-                .expect("resend api key is validated during configuration loading");
-            BidMartEmailSender::Resend(ResendVerificationEmailSender::new(
-                resend_rs::Resend::new(resend_api_key),
-                config.resend_from_email.clone(),
-                config.verify_email_url_base.clone(),
-                config.password_reset_url_base.clone(),
-            ))
-        }
-        EmailDeliveryMode::Log => BidMartEmailSender::Log(LoggedEmailSender::new(
-            config.verify_email_url_base.clone(),
-            config.password_reset_url_base.clone(),
-        )),
-    });
+    let resend_client = Resend::new(&config.resend_api_key);
+    let email_sender = Arc::new(ResendVerificationEmailSender::new(
+        resend_client,
+        config.resend_from_email.clone(),
+        config.verify_email_url_base.clone(),
+        config.password_reset_url_base.clone(),
+    ));
     let clock = Arc::new(SystemClock);
     let jwt_service = Arc::new(Hs256JwtService::new(
         &config.auth_jwt_secret,
@@ -168,8 +153,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         auth_mfa_use_case,
         jwt_service,
         session_repository,
-        auth_attempt_limiter,
         clock,
+        config.auth_session_cookie_name.clone(),
+        config.auth_session_cookie_secure,
+        config.auth_session_cookie_same_site.clone(),
+        config.auth_access_token_ttl_seconds,
     );
 
     let router = create_router_with_cors_origins(app_state, &config.cors_allowed_origins);

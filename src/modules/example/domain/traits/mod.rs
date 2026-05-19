@@ -182,12 +182,6 @@ pub trait SessionRepository: Send + Sync {
         current_jti_hash: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<bool, AuthError>;
-    async fn revoke_current_session(
-        &self,
-        user_id: Uuid,
-        current_jti_hash: &str,
-        now: DateTime<Utc>,
-    ) -> Result<bool, AuthError>;
     async fn revoke_all_other_sessions(
         &self,
         user_id: Uuid,
@@ -238,10 +232,4 @@ pub trait TotpService: Send + Sync {
 
 pub trait Clock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
-}
-
-pub trait AuthAttemptLimiter: Send + Sync {
-    fn check(&self, key: &str, now: DateTime<Utc>) -> Result<(), AuthError>;
-    fn record_failure(&self, key: &str, now: DateTime<Utc>);
-    fn record_success(&self, key: &str);
 }

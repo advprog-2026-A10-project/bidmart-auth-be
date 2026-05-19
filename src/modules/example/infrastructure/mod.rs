@@ -13,9 +13,7 @@ use crate::modules::auth::application::use_cases::password_reset_use_case::{
 use crate::modules::auth::application::use_cases::register_user_use_case::RegisterUserUseCase;
 use crate::modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
 use crate::modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
-use crate::modules::auth::domain::traits::{
-    AuthAttemptLimiter, Clock, JwtService, SessionRepository,
-};
+use crate::modules::auth::domain::traits::{Clock, JwtService, SessionRepository};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -27,8 +25,11 @@ pub struct AppState {
     pub auth_mfa_use_case: Arc<AuthMfaUseCase>,
     pub jwt_service: Arc<dyn JwtService>,
     pub session_repository: Arc<dyn SessionRepository>,
-    pub auth_attempt_limiter: Arc<dyn AuthAttemptLimiter>,
     pub clock: Arc<dyn Clock>,
+    pub session_cookie_name: String,
+    pub session_cookie_secure: bool,
+    pub session_cookie_same_site: String,
+    pub session_cookie_max_age_seconds: i64,
 }
 
 impl AppState {
@@ -42,8 +43,11 @@ impl AppState {
         auth_mfa_use_case: Arc<AuthMfaUseCase>,
         jwt_service: Arc<dyn JwtService>,
         session_repository: Arc<dyn SessionRepository>,
-        auth_attempt_limiter: Arc<dyn AuthAttemptLimiter>,
         clock: Arc<dyn Clock>,
+        session_cookie_name: String,
+        session_cookie_secure: bool,
+        session_cookie_same_site: String,
+        session_cookie_max_age_seconds: i64,
     ) -> Self {
         Self {
             register_use_case,
@@ -54,8 +58,11 @@ impl AppState {
             auth_mfa_use_case,
             jwt_service,
             session_repository,
-            auth_attempt_limiter,
             clock,
+            session_cookie_name,
+            session_cookie_secure,
+            session_cookie_same_site,
+            session_cookie_max_age_seconds,
         }
     }
 }
@@ -64,6 +71,7 @@ pub mod auth_extractor;
 pub mod controllers;
 pub mod repositories;
 pub mod services;
+pub mod session_cookie;
 
 #[cfg(test)]
 pub fn create_router(state: AppState) -> Router {
@@ -87,6 +95,7 @@ pub fn create_router_with_cors_origins(state: AppState, allowed_origins: &[Strin
 
     let cors = CorsLayer::new()
         .allow_origin(allowed_origins)
+        .allow_credentials(true)
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -128,8 +137,8 @@ pub fn create_router_with_cors_origins(state: AppState, allowed_origins: &[Strin
             post(controllers::logout).options(cors_preflight),
         )
         .route(
-            "/auth/me",
-            get(controllers::auth_me).options(cors_preflight),
+            "/auth/validate",
+            post(controllers::validate_session).options(cors_preflight),
         )
         .route(
             "/auth/mfa/send-email",

@@ -22,12 +22,11 @@ use crate::modules::auth::domain::entities::{
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
-    AuthAttemptLimiter, Clock, EmailMfaCodeRepository, EmailVerificationTokenRepository,
-    JwtService, MfaEmailSender, MfaTicketRepository, NotificationPreferencesRepository,
-    PasswordHasher, PasswordResetCompletionRepository, PasswordResetEmailSender,
-    PasswordResetTokenRepository, PasswordVerifier, SessionRepository, TotpService,
-    TotpSetupRepository, UserRepository, VerificationEmailSender, VerificationTokenGenerator,
-    VerificationTokenHasher,
+    Clock, EmailMfaCodeRepository, EmailVerificationTokenRepository, JwtService, MfaEmailSender,
+    MfaTicketRepository, NotificationPreferencesRepository, PasswordHasher,
+    PasswordResetCompletionRepository, PasswordResetEmailSender, PasswordResetTokenRepository,
+    PasswordVerifier, SessionRepository, TotpService, TotpSetupRepository, UserRepository,
+    VerificationEmailSender, VerificationTokenGenerator, VerificationTokenHasher,
 };
 
 pub fn fixed_now() -> DateTime<Utc> {
@@ -1210,33 +1209,6 @@ impl SessionRepository for FakeSessionRepository {
         Ok(false)
     }
 
-    async fn revoke_current_session(
-        &self,
-        user_id: Uuid,
-        current_jti_hash: &str,
-        now: DateTime<Utc>,
-    ) -> Result<bool, AuthError> {
-        if let Some(err) = self
-            .revoke_error
-            .lock()
-            .expect("error lock poisoned")
-            .clone()
-        {
-            return Err(err);
-        }
-        let mut state = self.state.lock().expect("state lock poisoned");
-        for session in state.sessions_by_hash.values_mut() {
-            if session.user_id == user_id
-                && session.jti_hash == current_jti_hash
-                && session.expires_at > now
-            {
-                session.expires_at = now;
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
     async fn revoke_all_other_sessions(
         &self,
         user_id: Uuid,
@@ -1484,19 +1456,6 @@ impl Clock for FixedClock {
     fn now(&self) -> DateTime<Utc> {
         *self.current.lock().expect("clock lock poisoned")
     }
-}
-
-#[derive(Debug, Default)]
-pub struct NoopAuthAttemptLimiter;
-
-impl AuthAttemptLimiter for NoopAuthAttemptLimiter {
-    fn check(&self, _key: &str, _now: DateTime<Utc>) -> Result<(), AuthError> {
-        Ok(())
-    }
-
-    fn record_failure(&self, _key: &str, _now: DateTime<Utc>) {}
-
-    fn record_success(&self, _key: &str) {}
 }
 
 pub struct UseCaseTestContext {

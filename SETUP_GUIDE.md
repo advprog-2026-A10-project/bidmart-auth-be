@@ -2,6 +2,8 @@
 
 This document provides instructions for agents to replicate the `bidmart-auth-be` project structure.
 
+For current service-to-service token validation contract, see [`docs/AUTH_VALIDATE_CONTRACT.md`](./docs/AUTH_VALIDATE_CONTRACT.md).
+
 ## Project Overview
 
 - **Project Name**: bidmart-auth-be
@@ -9,6 +11,7 @@ This document provides instructions for agents to replicate the `bidmart-auth-be
 - **Architecture**: Modular Clean Architecture
 - **Database**: PostgreSQL with SQLx
 - **Authentication**: JWT with scrypt password hashing
+- **Session Mode**: Hybrid (`Authorization` bearer + `auth_session` httpOnly cookie)
 
 ## Directory Structure
 
