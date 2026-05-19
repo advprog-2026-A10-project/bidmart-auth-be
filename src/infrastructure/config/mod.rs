@@ -55,6 +55,9 @@ impl AppConfig {
             }
         }
 
+        let email_delivery_mode = email_delivery_mode("APP_EMAIL_DELIVERY_MODE")?;
+        validate_email_configuration(&email_delivery_mode)?;
+
         Ok(AppConfig {
             server_host: required_env("APP_SERVER_HOST")?,
             server_port: parsed_env("APP_SERVER_PORT")?,
@@ -105,7 +108,7 @@ impl AppConfig {
                 300,
             )?,
             auth_jwt_secret: required_jwt_secret("APP_AUTH_JWT_SECRET")?,
-            email_delivery_mode: email_delivery_mode("APP_EMAIL_DELIVERY_MODE")?,
+            email_delivery_mode,
             resend_api_key: resend_api_key()?,
             resend_from_email: optional_env(
                 "APP_RESEND_FROM_EMAIL",
@@ -158,6 +161,78 @@ fn parse_email_delivery_mode(key: &str, value: &str) -> Result<EmailDeliveryMode
             "Invalid {key}: expected 'resend' or 'log'"
         ))),
     }
+}
+
+fn validate_email_configuration(mode: &EmailDeliveryMode) -> Result<(), ConfigError> {
+    let is_production = is_production_environment();
+
+    if is_production && *mode == EmailDeliveryMode::Log {
+        return Err(ConfigError::Message(
+            "Invalid APP_EMAIL_DELIVERY_MODE: production cannot use log email delivery".to_string(),
+        ));
+    }
+
+    if *mode == EmailDeliveryMode::Resend {
+        let api_key = required_env("APP_RESEND_API_KEY")?;
+        validate_resend_api_key("APP_RESEND_API_KEY", &api_key)?;
+
+        let from_email = optional_env(
+            "APP_RESEND_FROM_EMAIL",
+            "BidMart <no-reply@updates.bidmart.com>",
+        );
+        validate_from_email("APP_RESEND_FROM_EMAIL", &from_email)?;
+    }
+
+    Ok(())
+}
+
+fn is_production_environment() -> bool {
+    ["APP_ENV", "RUST_ENV", "ENVIRONMENT", "NODE_ENV"]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .any(|value| value.trim().eq_ignore_ascii_case("production"))
+}
+
+fn validate_resend_api_key(key: &str, value: &str) -> Result<(), ConfigError> {
+    let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if !trimmed.starts_with("re_")
+        || trimmed.len() < 12
+        || lower.contains("your")
+        || lower.contains("placeholder")
+        || lower.contains("xxx")
+        || lower.contains("test")
+    {
+        return Err(ConfigError::Message(format!(
+            "Invalid {key}: configure a real Resend API key through the environment"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_from_email(key: &str, value: &str) -> Result<(), ConfigError> {
+    let trimmed = value.trim();
+    let address = trimmed
+        .rsplit_once('<')
+        .and_then(|(_, rest)| rest.strip_suffix('>'))
+        .unwrap_or(trimmed)
+        .trim();
+    let lower = address.to_ascii_lowercase();
+
+    if !address.contains('@')
+        || lower.contains("example.")
+        || lower.contains("localhost")
+        || lower.ends_with("@gmail.com")
+        || lower.ends_with("@yahoo.com")
+        || lower.ends_with("@outlook.com")
+    {
+        return Err(ConfigError::Message(format!(
+            "Invalid {key}: use a verified custom-domain sender address"
+        )));
+    }
+
+    Ok(())
 }
 
 fn resend_api_key() -> Result<Option<String>, ConfigError> {
@@ -258,8 +333,12 @@ fn validate_cors_origin(key: &str, value: &str) -> Result<(), ConfigError> {
 mod tests {
     use super::{
         parse_cors_allowed_origins_value, parse_email_delivery_mode,
-        validate_absolute_http_url_base, validate_cors_origin, EmailDeliveryMode,
+        validate_absolute_http_url_base, validate_cors_origin, validate_email_configuration,
+        EmailDeliveryMode,
     };
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn absolute_http_url_base_validation_accepts_http_and_https() {
@@ -333,5 +412,80 @@ mod tests {
             EmailDeliveryMode::Log
         );
         assert!(parse_email_delivery_mode("APP_EMAIL_DELIVERY_MODE", "stdout").is_err());
+    }
+
+    #[test]
+    fn production_rejects_log_email_delivery() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("APP_ENV", "production");
+
+        let result = validate_email_configuration(&EmailDeliveryMode::Log);
+
+        std::env::remove_var("APP_ENV");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn production_resend_rejects_missing_or_placeholder_key() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("APP_ENV", "production");
+        std::env::remove_var("APP_RESEND_API_KEY");
+        std::env::set_var(
+            "APP_RESEND_FROM_EMAIL",
+            "BidMart <no-reply@updates.bidmart.com>",
+        );
+
+        let missing = validate_email_configuration(&EmailDeliveryMode::Resend);
+
+        std::env::set_var("APP_RESEND_API_KEY", "re_your_api_key");
+        let placeholder = validate_email_configuration(&EmailDeliveryMode::Resend);
+
+        std::env::remove_var("APP_ENV");
+        std::env::remove_var("APP_RESEND_API_KEY");
+        std::env::remove_var("APP_RESEND_FROM_EMAIL");
+        assert!(missing.is_err());
+        assert!(placeholder.is_err());
+    }
+
+    #[test]
+    fn development_allows_log_email_delivery() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("APP_ENV", "development");
+
+        let result = validate_email_configuration(&EmailDeliveryMode::Log);
+
+        std::env::remove_var("APP_ENV");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn resend_mode_accepts_configured_key_and_custom_domain_sender() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("APP_ENV", "development");
+        std::env::set_var("APP_RESEND_API_KEY", "re_abcdefghijklmnopqrstuvwxyz");
+        std::env::set_var(
+            "APP_RESEND_FROM_EMAIL",
+            "BidMart <no-reply@updates.bidmart.com>",
+        );
+
+        let result = validate_email_configuration(&EmailDeliveryMode::Resend);
+
+        std::env::remove_var("APP_ENV");
+        std::env::remove_var("APP_RESEND_API_KEY");
+        std::env::remove_var("APP_RESEND_FROM_EMAIL");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn resend_mode_rejects_public_mailbox_sender() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("APP_RESEND_API_KEY", "re_abcdefghijklmnopqrstuvwxyz");
+        std::env::set_var("APP_RESEND_FROM_EMAIL", "BidMart <bidmart@gmail.com>");
+
+        let result = validate_email_configuration(&EmailDeliveryMode::Resend);
+
+        std::env::remove_var("APP_RESEND_API_KEY");
+        std::env::remove_var("APP_RESEND_FROM_EMAIL");
+        assert!(result.is_err());
     }
 }
