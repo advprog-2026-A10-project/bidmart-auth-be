@@ -24,6 +24,9 @@ pub struct AppConfig {
     pub verify_email_url_base: String,
     pub password_reset_url_base: String,
     pub cors_allowed_origins: Vec<String>,
+    pub auth_session_cookie_name: String,
+    pub auth_session_cookie_secure: bool,
+    pub auth_session_cookie_same_site: String,
 }
 
 impl AppConfig {
@@ -93,6 +96,12 @@ impl AppConfig {
             verify_email_url_base: required_url_base("APP_VERIFY_EMAIL_URL_BASE")?,
             password_reset_url_base: required_url_base("APP_PASSWORD_RESET_URL_BASE")?,
             cors_allowed_origins: cors_allowed_origins("APP_CORS_ALLOWED_ORIGINS")?,
+            auth_session_cookie_name: optional_env("APP_AUTH_SESSION_COOKIE_NAME", "auth_session"),
+            auth_session_cookie_secure: optional_parsed_env(
+                "APP_AUTH_SESSION_COOKIE_SECURE",
+                false,
+            )?,
+            auth_session_cookie_same_site: optional_env("APP_AUTH_SESSION_COOKIE_SAME_SITE", "Lax"),
         })
     }
 }
@@ -128,6 +137,13 @@ where
     required_env(key)?
         .parse::<T>()
         .map_err(|_| ConfigError::Message(format!("Invalid {key}")))
+}
+
+fn optional_env(key: &str, default: &str) -> String {
+    match std::env::var(key) {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => default.to_string(),
+    }
 }
 
 fn optional_parsed_env<T>(key: &str, default: T) -> Result<T, ConfigError>

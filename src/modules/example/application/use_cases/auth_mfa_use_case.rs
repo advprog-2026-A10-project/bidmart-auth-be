@@ -6,11 +6,12 @@ use validator::ValidateEmail;
 use crate::modules::auth::application::dto::{
     AuthTokenResult, AuthenticatedLoginResult, AuthenticatedUserContext, ChangePasswordCommand,
     DisableMfaCommand, LoginCommand, LoginOutcome, MessageResponseDto, MfaSettingsDto,
-    NotificationPreferencesDto, NotificationPreferencesResponseDto, SendEmailMfaCommand,
-    SessionDto, SessionsResponseDto, SettingsProfileResponseDto, SettingsProfileUserDto,
-    SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult, UpdateNotificationPreferencesCommand,
-    UpdateProfileCommand, UpdateProfileResponseDto, VerifyEmailMfaCommand,
-    VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand, VerifyTotpSetupCommand,
+    NotificationPreferencesDto, NotificationPreferencesResponseDto, PublicUserDto,
+    SendEmailMfaCommand, SessionDto, SessionsResponseDto, SettingsProfileResponseDto,
+    SettingsProfileUserDto, SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult,
+    UpdateNotificationPreferencesCommand, UpdateProfileCommand, UpdateProfileResponseDto,
+    VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand,
+    VerifyTotpSetupCommand,
 };
 use crate::modules::auth::application::use_cases::policy::AuthPolicy;
 use crate::modules::auth::domain::entities::{
@@ -256,6 +257,20 @@ impl AuthMfaUseCase {
         Ok(MfaSettingsDto {
             mfa_enabled: user.mfa_email_enabled || user.mfa_totp_enabled,
             mfa_type,
+        })
+    }
+
+    pub async fn resolve_authenticated_user(
+        &self,
+        auth: AuthenticatedUserContext,
+    ) -> Result<PublicUserDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        let email_verified = user.is_email_verified();
+        Ok(PublicUserDto {
+            id: user.id,
+            name: user.display_name(),
+            email: user.email,
+            email_verified,
         })
     }
 

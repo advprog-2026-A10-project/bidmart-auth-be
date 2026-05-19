@@ -154,6 +154,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         jwt_service,
         session_repository,
         clock,
+        config.auth_session_cookie_name.clone(),
+        config.auth_session_cookie_secure,
+        config.auth_session_cookie_same_site.clone(),
+        config.auth_access_token_ttl_seconds,
     );
 
     let router = create_router_with_cors_origins(app_state, &config.cors_allowed_origins);

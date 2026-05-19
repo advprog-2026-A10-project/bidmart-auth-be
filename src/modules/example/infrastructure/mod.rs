@@ -26,6 +26,10 @@ pub struct AppState {
     pub jwt_service: Arc<dyn JwtService>,
     pub session_repository: Arc<dyn SessionRepository>,
     pub clock: Arc<dyn Clock>,
+    pub session_cookie_name: String,
+    pub session_cookie_secure: bool,
+    pub session_cookie_same_site: String,
+    pub session_cookie_max_age_seconds: i64,
 }
 
 impl AppState {
@@ -40,6 +44,10 @@ impl AppState {
         jwt_service: Arc<dyn JwtService>,
         session_repository: Arc<dyn SessionRepository>,
         clock: Arc<dyn Clock>,
+        session_cookie_name: String,
+        session_cookie_secure: bool,
+        session_cookie_same_site: String,
+        session_cookie_max_age_seconds: i64,
     ) -> Self {
         Self {
             register_use_case,
@@ -51,6 +59,10 @@ impl AppState {
             jwt_service,
             session_repository,
             clock,
+            session_cookie_name,
+            session_cookie_secure,
+            session_cookie_same_site,
+            session_cookie_max_age_seconds,
         }
     }
 }
@@ -59,6 +71,7 @@ pub mod auth_extractor;
 pub mod controllers;
 pub mod repositories;
 pub mod services;
+pub mod session_cookie;
 
 #[cfg(test)]
 pub fn create_router(state: AppState) -> Router {
@@ -82,6 +95,7 @@ pub fn create_router_with_cors_origins(state: AppState, allowed_origins: &[Strin
 
     let cors = CorsLayer::new()
         .allow_origin(allowed_origins)
+        .allow_credentials(true)
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -117,6 +131,14 @@ pub fn create_router_with_cors_origins(state: AppState, allowed_origins: &[Strin
         .route(
             "/auth/login",
             post(controllers::login).options(cors_preflight),
+        )
+        .route(
+            "/auth/logout",
+            post(controllers::logout).options(cors_preflight),
+        )
+        .route(
+            "/auth/validate",
+            post(controllers::validate_session).options(cors_preflight),
         )
         .route(
             "/auth/mfa/send-email",

@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use crate::modules::auth::application::dto::AuthenticatedUserContext;
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::infrastructure::controllers::ApiError;
+use crate::modules::auth::infrastructure::session_cookie::extract_token_from_headers;
 use crate::modules::auth::infrastructure::AppState;
 
 pub struct AuthenticatedUser(pub AuthenticatedUserContext);
@@ -18,16 +19,12 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let token = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
+        let token = extract_token_from_headers(&parts.headers, &state.session_cookie_name)
             .ok_or_else(|| ApiError::from_auth_error(AuthError::Unauthorized))?;
 
         let context = state
             .jwt_service
-            .verify_access_token(token, state.clock.now())
+            .verify_access_token(&token, state.clock.now())
             .map_err(ApiError::from_auth_error)?;
 
         let jti_hash = context

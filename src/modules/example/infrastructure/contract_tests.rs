@@ -26,6 +26,10 @@ fn test_router(context: &UseCaseTestContext) -> axum::Router {
         auth_context.jwt_issuer,
         auth_context.session_repository,
         auth_context.clock,
+        "auth_session".to_string(),
+        false,
+        "Lax".to_string(),
+        3600,
     );
 
     create_router(app_state)
@@ -43,6 +47,10 @@ fn auth_test_router(context: &AuthUseCaseTestContext) -> axum::Router {
         context.jwt_issuer.clone(),
         context.session_repository.clone(),
         context.clock.clone(),
+        "auth_session".to_string(),
+        false,
+        "Lax".to_string(),
+        3600,
     );
 
     create_router(app_state)
@@ -107,9 +115,11 @@ async fn post_register_returns_contract_success_shape() {
                 .header(CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "name": "Alice Johnson",
+                        "firstName": "Alice",
+                        "lastName": "Johnson",
                         "email": "alice@example.com",
-                        "password": "StrongPassword123!"
+                        "password": "StrongPassword123!",
+                        "confirmPassword": "StrongPassword123!"
                     })
                     .to_string(),
                 ))
@@ -141,6 +151,39 @@ async fn post_register_returns_contract_success_shape() {
 }
 
 #[tokio::test]
+async fn post_register_legacy_name_payload_remains_supported() {
+    let context = UseCaseTestContext::default();
+    context
+        .token_generator
+        .push_token("legacy-contract-token-1".to_string());
+    let app = test_router(&context);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/register")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "name": "Legacy Name",
+                        "email": "legacy@example.com",
+                        "password": "StrongPassword123!"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = response_json(response).await;
+    assert_eq!(body["user"]["name"], "Legacy Name");
+    assert_eq!(body["user"]["email"], "legacy@example.com");
+}
+
+#[tokio::test]
 async fn post_register_validation_failure_returns_422_error_envelope() {
     let context = UseCaseTestContext::default();
     let app = test_router(&context);
@@ -168,7 +211,6 @@ async fn post_register_validation_failure_returns_422_error_envelope() {
 
     let body = response_json(response).await;
     assert_eq!(body["message"], "Validation error");
-    assert_eq!(body["errors"]["name"][0], "Name is required");
     assert_eq!(
         body["errors"]["email"][0],
         "Email must be a valid email address"
@@ -176,6 +218,40 @@ async fn post_register_validation_failure_returns_422_error_envelope() {
     assert_eq!(
         body["errors"]["password"][0],
         "Password must be at least 8 characters"
+    );
+}
+
+#[tokio::test]
+async fn post_register_canonical_payload_requires_confirm_password() {
+    let context = UseCaseTestContext::default();
+    let app = test_router(&context);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/register")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "firstName": "Alice",
+                        "lastName": "Johnson",
+                        "email": "alice@example.com",
+                        "password": "StrongPassword123!"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response_json(response).await;
+    assert_eq!(body["message"], "Validation error");
+    assert_eq!(
+        body["errors"]["confirmPassword"][0],
+        "Confirm password is required"
     );
 }
 
@@ -544,6 +620,13 @@ async fn public_mfa_email_and_totp_endpoints_return_contract_shapes() {
         .await
         .expect("response");
     assert_eq!(email_response.status(), StatusCode::OK);
+    let email_set_cookie = email_response
+        .headers()
+        .get(SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(email_set_cookie.contains("auth_session="));
     assert_eq!(
         response_json(email_response).await,
         json!({
@@ -571,6 +654,13 @@ async fn public_mfa_email_and_totp_endpoints_return_contract_shapes() {
         .await
         .expect("response");
     assert_eq!(totp_response.status(), StatusCode::OK);
+    let totp_set_cookie = totp_response
+        .headers()
+        .get(SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(totp_set_cookie.contains("auth_session="));
     assert_eq!(
         response_json(totp_response).await,
         json!({
@@ -583,6 +673,99 @@ async fn public_mfa_email_and_totp_endpoints_return_contract_shapes() {
             }
         })
     );
+}
+
+#[tokio::test]
+async fn post_validate_accepts_bearer_or_cookie_and_returns_claims_shape() {
+    let context = AuthUseCaseTestContext::default();
+    let user = verified_auth_user("validate-contract@example.com");
+    context.user_repository.insert_user(user.clone());
+    let bearer = seed_authenticated_session(&context, user.id);
+    let app = auth_test_router(&context);
+
+    let bearer_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/validate")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(bearer_response.status(), StatusCode::OK);
+    let bearer_body = response_json(bearer_response).await;
+    assert_eq!(bearer_body["userId"], user.id.to_string());
+    assert_eq!(bearer_body["name"], "Contract Auth");
+    assert_eq!(bearer_body["email"], "validate-contract@example.com");
+    assert_eq!(bearer_body["emailVerified"], true);
+    assert_eq!(bearer_body["mfaSatisfied"], true);
+    assert!(bearer_body["sessionExpiry"].as_str().is_some());
+
+    let cookie_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/validate")
+                .header("cookie", format!("auth_session={bearer}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(cookie_response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn post_logout_revokes_current_session_and_clears_cookie() {
+    let context = AuthUseCaseTestContext::default();
+    let user = verified_auth_user("logout-contract@example.com");
+    context.user_repository.insert_user(user.clone());
+    let bearer = seed_authenticated_session(&context, user.id);
+    let app = auth_test_router(&context);
+
+    let logout_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/logout")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(logout_response.status(), StatusCode::OK);
+    let set_cookie = logout_response
+        .headers()
+        .get(SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(set_cookie.contains("auth_session="));
+    assert!(set_cookie.contains("Max-Age=0"));
+    assert_eq!(
+        response_json(logout_response).await,
+        json!({
+            "message": "Logout successful."
+        })
+    );
+
+    let validate_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/validate")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(validate_response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
