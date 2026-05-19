@@ -229,6 +229,18 @@ pub async fn revoke_all_sessions(
     Ok(Json(result))
 }
 
+pub async fn logout(
+    State(state): State<AppState>,
+    AuthenticatedUser(auth): AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    state
+        .auth_mfa_use_case
+        .logout(auth)
+        .await
+        .map_err(ApiError::from_auth_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn get_notification_preferences(
     State(state): State<AppState>,
     AuthenticatedUser(auth): AuthenticatedUser,

@@ -1209,6 +1209,33 @@ impl SessionRepository for FakeSessionRepository {
         Ok(false)
     }
 
+    async fn revoke_current_session(
+        &self,
+        user_id: Uuid,
+        current_jti_hash: &str,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AuthError> {
+        if let Some(err) = self
+            .revoke_error
+            .lock()
+            .expect("error lock poisoned")
+            .clone()
+        {
+            return Err(err);
+        }
+        let mut state = self.state.lock().expect("state lock poisoned");
+        for session in state.sessions_by_hash.values_mut() {
+            if session.user_id == user_id
+                && session.jti_hash == current_jti_hash
+                && session.expires_at > now
+            {
+                session.expires_at = now;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     async fn revoke_all_other_sessions(
         &self,
         user_id: Uuid,

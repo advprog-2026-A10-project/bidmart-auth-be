@@ -1054,6 +1054,32 @@ impl SessionRepository for PostgresSessionRepository {
         Ok(rows_affected == 1)
     }
 
+    async fn revoke_current_session(
+        &self,
+        user_id: Uuid,
+        current_jti_hash: &str,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AuthError> {
+        let rows_affected = sqlx::query(
+            r#"
+            UPDATE sessions
+            SET expired_at = $3
+            WHERE
+                user_id = $1
+                AND jti_hash = $2
+                AND expired_at > $3
+            "#,
+        )
+        .bind(user_id)
+        .bind(current_jti_hash)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_database_error)?
+        .rows_affected();
+        Ok(rows_affected == 1)
+    }
+
     async fn revoke_all_other_sessions(
         &self,
         user_id: Uuid,

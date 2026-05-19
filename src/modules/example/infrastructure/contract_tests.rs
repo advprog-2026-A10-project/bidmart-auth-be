@@ -483,6 +483,57 @@ async fn post_login_mfa_enabled_returns_ticket_contract() {
 }
 
 #[tokio::test]
+async fn post_logout_revokes_current_session_and_returns_no_content() {
+    let context = AuthUseCaseTestContext::default();
+    let user = verified_auth_user("logout@example.com");
+    context.user_repository.insert_user(user.clone());
+    let bearer = seed_authenticated_session(&context, user.id);
+    let jti_hash = FakeTokenHasher::deterministic_hash(&bearer);
+    let app = auth_test_router(&context);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/logout")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let session_state = context.session_repository.snapshot();
+    let session = session_state
+        .sessions_by_hash
+        .get(&jti_hash)
+        .expect("session exists");
+    assert_eq!(session.expires_at, fixed_now());
+}
+
+#[tokio::test]
+async fn post_logout_without_bearer_returns_unauthorized_envelope() {
+    let context = AuthUseCaseTestContext::default();
+    let app = auth_test_router(&context);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/logout")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body = response_json(response).await;
+    assert_eq!(body["message"], "Unauthorized.");
+}
+
+#[tokio::test]
 async fn public_mfa_email_and_totp_endpoints_return_contract_shapes() {
     let context = AuthUseCaseTestContext::default();
     let mut user = verified_auth_user("public-mfa@example.com");

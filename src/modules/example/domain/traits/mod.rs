@@ -182,6 +182,12 @@ pub trait SessionRepository: Send + Sync {
         current_jti_hash: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<bool, AuthError>;
+    async fn revoke_current_session(
+        &self,
+        user_id: Uuid,
+        current_jti_hash: &str,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AuthError>;
     async fn revoke_all_other_sessions(
         &self,
         user_id: Uuid,

@@ -119,6 +119,10 @@ pub fn create_router_with_cors_origins(state: AppState, allowed_origins: &[Strin
             post(controllers::login).options(cors_preflight),
         )
         .route(
+            "/auth/logout",
+            post(controllers::logout).options(cors_preflight),
+        )
+        .route(
             "/auth/mfa/send-email",
             post(controllers::send_email_mfa).options(cors_preflight),
         )

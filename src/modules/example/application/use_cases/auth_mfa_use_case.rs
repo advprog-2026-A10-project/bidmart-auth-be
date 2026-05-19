@@ -376,6 +376,27 @@ impl AuthMfaUseCase {
         })
     }
 
+    pub async fn logout(
+        &self,
+        auth: AuthenticatedUserContext,
+    ) -> Result<MessageResponseDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        let jti_hash = auth
+            .session_jti_hash
+            .as_deref()
+            .ok_or(AuthError::SessionInvalid)?;
+        let revoked = self
+            .session_repository
+            .revoke_current_session(user.id, jti_hash, self.clock.now())
+            .await?;
+        if !revoked {
+            return Err(AuthError::SessionInvalid);
+        }
+        Ok(MessageResponseDto {
+            message: "Logged out.".to_string(),
+        })
+    }
+
     pub async fn get_notification_preferences(
         &self,
         auth: AuthenticatedUserContext,
