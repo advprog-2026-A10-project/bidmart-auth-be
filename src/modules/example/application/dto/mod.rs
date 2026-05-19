@@ -294,6 +294,11 @@ pub struct PublicUserDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AuthMeResponseDto {
+    pub user: PublicUserDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RegisterResponseDto {
     pub user: PublicUserDto,
     pub message: String,

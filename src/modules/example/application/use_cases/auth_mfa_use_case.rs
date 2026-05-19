@@ -6,11 +6,12 @@ use validator::ValidateEmail;
 use crate::modules::auth::application::dto::{
     AuthTokenResult, AuthenticatedLoginResult, AuthenticatedUserContext, ChangePasswordCommand,
     DisableMfaCommand, LoginCommand, LoginOutcome, MessageResponseDto, MfaSettingsDto,
-    NotificationPreferencesDto, NotificationPreferencesResponseDto, SendEmailMfaCommand,
-    SessionDto, SessionsResponseDto, SettingsProfileResponseDto, SettingsProfileUserDto,
-    SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult, UpdateNotificationPreferencesCommand,
-    UpdateProfileCommand, UpdateProfileResponseDto, VerifyEmailMfaCommand,
-    VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand, VerifyTotpSetupCommand,
+    NotificationPreferencesDto, NotificationPreferencesResponseDto, PublicUserDto,
+    SendEmailMfaCommand, SessionDto, SessionsResponseDto, SettingsProfileResponseDto,
+    SettingsProfileUserDto, SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult,
+    UpdateNotificationPreferencesCommand, UpdateProfileCommand, UpdateProfileResponseDto,
+    VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand,
+    VerifyTotpSetupCommand,
 };
 use crate::modules::auth::application::use_cases::policy::AuthPolicy;
 use crate::modules::auth::domain::entities::{
@@ -267,6 +268,14 @@ impl AuthMfaUseCase {
         Ok(SettingsProfileResponseDto {
             user: profile_dto(&user),
         })
+    }
+
+    pub async fn current_user(
+        &self,
+        auth: AuthenticatedUserContext,
+    ) -> Result<PublicUserDto, AuthError> {
+        let user = self.require_settings_user(&auth).await?;
+        Ok(public_user_dto(&user))
     }
 
     pub async fn update_profile(
@@ -685,6 +694,15 @@ fn profile_dto(user: &User) -> SettingsProfileUserDto {
         email: user.email.clone(),
         address: user.address.clone(),
         postal_code: user.postal_code.clone(),
+    }
+}
+
+fn public_user_dto(user: &User) -> PublicUserDto {
+    PublicUserDto {
+        id: user.id,
+        name: user.display_name(),
+        email: user.email.clone(),
+        email_verified: user.is_email_verified(),
     }
 }
 

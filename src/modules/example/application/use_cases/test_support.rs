@@ -22,11 +22,12 @@ use crate::modules::auth::domain::entities::{
 };
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
-    Clock, EmailMfaCodeRepository, EmailVerificationTokenRepository, JwtService, MfaEmailSender,
-    MfaTicketRepository, NotificationPreferencesRepository, PasswordHasher,
-    PasswordResetCompletionRepository, PasswordResetEmailSender, PasswordResetTokenRepository,
-    PasswordVerifier, SessionRepository, TotpService, TotpSetupRepository, UserRepository,
-    VerificationEmailSender, VerificationTokenGenerator, VerificationTokenHasher,
+    AuthAttemptLimiter, Clock, EmailMfaCodeRepository, EmailVerificationTokenRepository,
+    JwtService, MfaEmailSender, MfaTicketRepository, NotificationPreferencesRepository,
+    PasswordHasher, PasswordResetCompletionRepository, PasswordResetEmailSender,
+    PasswordResetTokenRepository, PasswordVerifier, SessionRepository, TotpService,
+    TotpSetupRepository, UserRepository, VerificationEmailSender, VerificationTokenGenerator,
+    VerificationTokenHasher,
 };
 
 pub fn fixed_now() -> DateTime<Utc> {
@@ -1483,6 +1484,19 @@ impl Clock for FixedClock {
     fn now(&self) -> DateTime<Utc> {
         *self.current.lock().expect("clock lock poisoned")
     }
+}
+
+#[derive(Debug, Default)]
+pub struct NoopAuthAttemptLimiter;
+
+impl AuthAttemptLimiter for NoopAuthAttemptLimiter {
+    fn check(&self, _key: &str, _now: DateTime<Utc>) -> Result<(), AuthError> {
+        Ok(())
+    }
+
+    fn record_failure(&self, _key: &str, _now: DateTime<Utc>) {}
+
+    fn record_success(&self, _key: &str) {}
 }
 
 pub struct UseCaseTestContext {

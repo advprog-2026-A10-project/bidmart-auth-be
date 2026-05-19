@@ -24,6 +24,8 @@ pub struct AppConfig {
     pub auth_email_mfa_cooldown_seconds: i64,
     pub auth_access_token_ttl_seconds: i64,
     pub auth_totp_setup_ttl_seconds: i64,
+    pub auth_attempt_limit_max_failures: usize,
+    pub auth_attempt_limit_window_seconds: i64,
     pub auth_jwt_secret: String,
     pub email_delivery_mode: EmailDeliveryMode,
     pub resend_api_key: Option<String>,
@@ -93,6 +95,14 @@ impl AppConfig {
             auth_totp_setup_ttl_seconds: optional_parsed_env(
                 "APP_AUTH_TOTP_SETUP_TTL_SECONDS",
                 600,
+            )?,
+            auth_attempt_limit_max_failures: optional_parsed_env(
+                "APP_AUTH_ATTEMPT_LIMIT_MAX_FAILURES",
+                5,
+            )?,
+            auth_attempt_limit_window_seconds: optional_parsed_env(
+                "APP_AUTH_ATTEMPT_LIMIT_WINDOW_SECONDS",
+                300,
             )?,
             auth_jwt_secret: required_jwt_secret("APP_AUTH_JWT_SECRET")?,
             email_delivery_mode: email_delivery_mode("APP_EMAIL_DELIVERY_MODE")?,

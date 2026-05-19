@@ -239,3 +239,9 @@ pub trait TotpService: Send + Sync {
 pub trait Clock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
 }
+
+pub trait AuthAttemptLimiter: Send + Sync {
+    fn check(&self, key: &str, now: DateTime<Utc>) -> Result<(), AuthError>;
+    fn record_failure(&self, key: &str, now: DateTime<Utc>);
+    fn record_success(&self, key: &str);
+}

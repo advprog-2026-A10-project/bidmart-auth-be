@@ -28,9 +28,9 @@ use modules::auth::infrastructure::repositories::{
     PostgresUserRepository,
 };
 use modules::auth::infrastructure::services::{
-    BidMartEmailSender, Hs256JwtService, LoggedEmailSender, RandomVerificationTokenGenerator,
-    ResendVerificationEmailSender, ScryptPasswordHasher, Sha256VerificationTokenHasher,
-    SystemClock, TotpRsService,
+    BidMartEmailSender, Hs256JwtService, InMemoryAuthAttemptLimiter, LoggedEmailSender,
+    RandomVerificationTokenGenerator, ResendVerificationEmailSender, ScryptPasswordHasher,
+    Sha256VerificationTokenHasher, SystemClock, TotpRsService,
 };
 use modules::auth::infrastructure::AppState;
 
@@ -54,6 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let notification_preferences_repository =
         Arc::new(PostgresNotificationPreferencesRepository::new(pool.clone()));
     let totp_setup_repository = Arc::new(PostgresTotpSetupRepository::new(pool));
+    let auth_attempt_limiter = Arc::new(InMemoryAuthAttemptLimiter::new(
+        config.auth_attempt_limit_max_failures,
+        Duration::seconds(config.auth_attempt_limit_window_seconds),
+    ));
     let password_hasher = Arc::new(ScryptPasswordHasher);
     let token_generator = Arc::new(RandomVerificationTokenGenerator);
     let token_hasher = Arc::new(Sha256VerificationTokenHasher);
@@ -164,6 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         auth_mfa_use_case,
         jwt_service,
         session_repository,
+        auth_attempt_limiter,
         clock,
     );
 

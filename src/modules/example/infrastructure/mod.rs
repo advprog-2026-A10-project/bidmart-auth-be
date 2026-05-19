@@ -13,7 +13,9 @@ use crate::modules::auth::application::use_cases::password_reset_use_case::{
 use crate::modules::auth::application::use_cases::register_user_use_case::RegisterUserUseCase;
 use crate::modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
 use crate::modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
-use crate::modules::auth::domain::traits::{Clock, JwtService, SessionRepository};
+use crate::modules::auth::domain::traits::{
+    AuthAttemptLimiter, Clock, JwtService, SessionRepository,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -25,6 +27,7 @@ pub struct AppState {
     pub auth_mfa_use_case: Arc<AuthMfaUseCase>,
     pub jwt_service: Arc<dyn JwtService>,
     pub session_repository: Arc<dyn SessionRepository>,
+    pub auth_attempt_limiter: Arc<dyn AuthAttemptLimiter>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -39,6 +42,7 @@ impl AppState {
         auth_mfa_use_case: Arc<AuthMfaUseCase>,
         jwt_service: Arc<dyn JwtService>,
         session_repository: Arc<dyn SessionRepository>,
+        auth_attempt_limiter: Arc<dyn AuthAttemptLimiter>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
@@ -50,6 +54,7 @@ impl AppState {
             auth_mfa_use_case,
             jwt_service,
             session_repository,
+            auth_attempt_limiter,
             clock,
         }
     }
@@ -121,6 +126,10 @@ pub fn create_router_with_cors_origins(state: AppState, allowed_origins: &[Strin
         .route(
             "/auth/logout",
             post(controllers::logout).options(cors_preflight),
+        )
+        .route(
+            "/auth/me",
+            get(controllers::auth_me).options(cors_preflight),
         )
         .route(
             "/auth/mfa/send-email",

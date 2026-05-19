@@ -1,9 +1,11 @@
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -22,8 +24,9 @@ use uuid::Uuid;
 use crate::modules::auth::application::dto::{AuthenticatedUserContext, IssuedAccessToken};
 use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::{
-    Clock, JwtService, MfaEmailSender, PasswordHasher, PasswordResetEmailSender, PasswordVerifier,
-    TotpService, VerificationEmailSender, VerificationTokenGenerator, VerificationTokenHasher,
+    AuthAttemptLimiter, Clock, JwtService, MfaEmailSender, PasswordHasher,
+    PasswordResetEmailSender, PasswordVerifier, TotpService, VerificationEmailSender,
+    VerificationTokenGenerator, VerificationTokenHasher,
 };
 
 #[derive(Debug, Default)]
@@ -76,6 +79,74 @@ pub struct SystemClock;
 impl Clock for SystemClock {
     fn now(&self) -> DateTime<Utc> {
         Utc::now()
+    }
+}
+
+#[derive(Debug)]
+pub struct InMemoryAuthAttemptLimiter {
+    max_failures: usize,
+    window: Duration,
+    failures_by_key: Mutex<HashMap<u64, VecDeque<DateTime<Utc>>>>,
+}
+
+impl InMemoryAuthAttemptLimiter {
+    pub fn new(max_failures: usize, window: Duration) -> Self {
+        Self {
+            max_failures: max_failures.max(1),
+            window,
+            failures_by_key: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn hashed_key(key: &str) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn retain_window(failures: &mut VecDeque<DateTime<Utc>>, cutoff: DateTime<Utc>) {
+        while failures
+            .front()
+            .map(|timestamp| *timestamp < cutoff)
+            .unwrap_or(false)
+        {
+            failures.pop_front();
+        }
+    }
+}
+
+impl AuthAttemptLimiter for InMemoryAuthAttemptLimiter {
+    fn check(&self, key: &str, now: DateTime<Utc>) -> Result<(), AuthError> {
+        let hashed_key = Self::hashed_key(key);
+        let mut failures_by_key = self
+            .failures_by_key
+            .lock()
+            .expect("auth attempt limiter lock poisoned");
+        let failures = failures_by_key.entry(hashed_key).or_default();
+        Self::retain_window(failures, now - self.window);
+        if failures.len() >= self.max_failures {
+            return Err(AuthError::TooManyAttempts);
+        }
+        Ok(())
+    }
+
+    fn record_failure(&self, key: &str, now: DateTime<Utc>) {
+        let hashed_key = Self::hashed_key(key);
+        let mut failures_by_key = self
+            .failures_by_key
+            .lock()
+            .expect("auth attempt limiter lock poisoned");
+        let failures = failures_by_key.entry(hashed_key).or_default();
+        Self::retain_window(failures, now - self.window);
+        failures.push_back(now);
+    }
+
+    fn record_success(&self, key: &str) {
+        let hashed_key = Self::hashed_key(key);
+        self.failures_by_key
+            .lock()
+            .expect("auth attempt limiter lock poisoned")
+            .remove(&hashed_key);
     }
 }
 
@@ -410,4 +481,39 @@ fn totp_from_secret(secret: &str) -> Result<TOTP, AuthError> {
         .map_err(|_| AuthError::DependencyFailure("invalid totp secret".to_string()))?;
     TOTP::new(TotpAlgorithm::SHA1, 6, 1, 30, decoded)
         .map_err(|_| AuthError::DependencyFailure("failed to create totp".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, TimeZone, Utc};
+
+    use super::{AuthAttemptLimiter, InMemoryAuthAttemptLimiter};
+    use crate::modules::auth::domain::errors::AuthError;
+
+    #[test]
+    fn in_memory_attempt_limiter_blocks_until_window_expires_and_resets_on_success() {
+        let limiter = InMemoryAuthAttemptLimiter::new(2, Duration::seconds(30));
+        let now = Utc.with_ymd_and_hms(2026, 5, 19, 0, 0, 0).unwrap();
+
+        assert_eq!(limiter.check("login:user@example.com", now), Ok(()));
+        limiter.record_failure("login:user@example.com", now);
+        limiter.record_failure("login:user@example.com", now + Duration::seconds(1));
+
+        assert_eq!(
+            limiter.check("login:user@example.com", now + Duration::seconds(2)),
+            Err(AuthError::TooManyAttempts)
+        );
+
+        assert_eq!(
+            limiter.check("login:user@example.com", now + Duration::seconds(31)),
+            Ok(())
+        );
+        limiter.record_failure("login:user@example.com", now + Duration::seconds(31));
+        limiter.record_success("login:user@example.com");
+
+        assert_eq!(
+            limiter.check("login:user@example.com", now + Duration::seconds(32)),
+            Ok(())
+        );
+    }
 }

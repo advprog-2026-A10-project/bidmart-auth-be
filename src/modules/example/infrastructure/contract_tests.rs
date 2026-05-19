@@ -9,7 +9,7 @@ use tower::ServiceExt;
 
 use crate::modules::auth::application::use_cases::test_support::{
     fixed_now, sample_user, short_cooldown_policy, AuthUseCaseTestContext, FakeTokenHasher,
-    UseCaseTestContext,
+    NoopAuthAttemptLimiter, UseCaseTestContext,
 };
 use crate::modules::auth::domain::entities::{AuthSession, UserStatus};
 use crate::modules::auth::infrastructure::{create_router, AppState};
@@ -25,6 +25,7 @@ fn test_router(context: &UseCaseTestContext) -> axum::Router {
         Arc::new(auth_context.auth_mfa_use_case()),
         auth_context.jwt_issuer,
         auth_context.session_repository,
+        Arc::new(NoopAuthAttemptLimiter),
         auth_context.clock,
     );
 
@@ -42,6 +43,7 @@ fn auth_test_router(context: &AuthUseCaseTestContext) -> axum::Router {
         Arc::new(context.auth_mfa_use_case()),
         context.jwt_issuer.clone(),
         context.session_repository.clone(),
+        Arc::new(NoopAuthAttemptLimiter),
         context.clock.clone(),
     );
 
@@ -531,6 +533,63 @@ async fn post_logout_without_bearer_returns_unauthorized_envelope() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body = response_json(response).await;
     assert_eq!(body["message"], "Unauthorized.");
+}
+
+#[tokio::test]
+async fn get_auth_me_returns_current_public_user_without_token_material() {
+    let context = AuthUseCaseTestContext::default();
+    let user = verified_auth_user("me@example.com");
+    context.user_repository.insert_user(user.clone());
+    let bearer = seed_authenticated_session(&context, user.id);
+    let app = auth_test_router(&context);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/auth/me")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "user": {
+                "id": user.id,
+                "name": "Contract Auth",
+                "email": "me@example.com",
+                "emailVerified": true
+            }
+        })
+    );
+}
+
+#[tokio::test]
+async fn get_auth_me_without_bearer_returns_unauthorized_envelope() {
+    let context = AuthUseCaseTestContext::default();
+    let app = auth_test_router(&context);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/auth/me")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response_json(response).await,
+        json!({ "message": "Unauthorized." })
+    );
 }
 
 #[tokio::test]

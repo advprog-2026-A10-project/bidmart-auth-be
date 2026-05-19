@@ -9,8 +9,8 @@ use serde::Serialize;
 use validator::{Validate, ValidationErrors};
 
 use crate::modules::auth::application::dto::{
-    AccessTokenResponseDto, ChangePasswordCommand, DisableMfaCommand, ForgotPasswordCommand,
-    LoginCommand, LoginResponseDto, MessageResponseDto, MfaSettingsDto,
+    AccessTokenResponseDto, AuthMeResponseDto, ChangePasswordCommand, DisableMfaCommand,
+    ForgotPasswordCommand, LoginCommand, LoginResponseDto, MessageResponseDto, MfaSettingsDto,
     NotificationPreferencesResponseDto, RegisterResponseDto, RegisterUserCommand,
     ResendVerificationCommand, ResetPasswordCommand, SendEmailMfaCommand, SessionsResponseDto,
     SettingsProfileResponseDto, SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult,
@@ -75,13 +75,24 @@ pub async fn login(
         .validate()
         .map_err(ApiError::from_validation_errors)?;
 
-    let result = state
-        .auth_mfa_use_case
-        .login(command)
-        .await
+    let limiter_key = login_limiter_key(&command.email);
+    let now = state.clock.now();
+    state
+        .auth_attempt_limiter
+        .check(&limiter_key, now)
         .map_err(ApiError::from_auth_error)?;
 
-    Ok(Json(result.into()))
+    let result = state.auth_mfa_use_case.login(command).await;
+
+    match &result {
+        Ok(_) => state.auth_attempt_limiter.record_success(&limiter_key),
+        Err(AuthError::InvalidCredentials) => state
+            .auth_attempt_limiter
+            .record_failure(&limiter_key, state.clock.now()),
+        Err(_) => {}
+    }
+
+    Ok(Json(result.map_err(ApiError::from_auth_error)?.into()))
 }
 
 pub async fn send_email_mfa(
@@ -110,12 +121,23 @@ pub async fn verify_email_mfa(
     command
         .validate()
         .map_err(ApiError::from_validation_errors)?;
-    let result = state
-        .auth_mfa_use_case
-        .verify_email_mfa(command)
-        .await
+    let limiter_key = mfa_limiter_key("email", &command.mfa_ticket);
+    let now = state.clock.now();
+    state
+        .auth_attempt_limiter
+        .check(&limiter_key, now)
         .map_err(ApiError::from_auth_error)?;
-    Ok(Json(result.into()))
+
+    let result = state.auth_mfa_use_case.verify_email_mfa(command).await;
+
+    match &result {
+        Ok(_) => state.auth_attempt_limiter.record_success(&limiter_key),
+        Err(AuthError::MfaCodeInvalid) => state
+            .auth_attempt_limiter
+            .record_failure(&limiter_key, state.clock.now()),
+        Err(_) => {}
+    }
+    Ok(Json(result.map_err(ApiError::from_auth_error)?.into()))
 }
 
 pub async fn verify_totp_mfa(
@@ -126,12 +148,35 @@ pub async fn verify_totp_mfa(
     command
         .validate()
         .map_err(ApiError::from_validation_errors)?;
-    let result = state
+    let limiter_key = mfa_limiter_key("totp", &command.mfa_ticket);
+    let now = state.clock.now();
+    state
+        .auth_attempt_limiter
+        .check(&limiter_key, now)
+        .map_err(ApiError::from_auth_error)?;
+
+    let result = state.auth_mfa_use_case.verify_totp_mfa(command).await;
+
+    match &result {
+        Ok(_) => state.auth_attempt_limiter.record_success(&limiter_key),
+        Err(AuthError::MfaCodeInvalid) => state
+            .auth_attempt_limiter
+            .record_failure(&limiter_key, state.clock.now()),
+        Err(_) => {}
+    }
+    Ok(Json(result.map_err(ApiError::from_auth_error)?.into()))
+}
+
+pub async fn auth_me(
+    State(state): State<AppState>,
+    AuthenticatedUser(auth): AuthenticatedUser,
+) -> Result<Json<AuthMeResponseDto>, ApiError> {
+    let user = state
         .auth_mfa_use_case
-        .verify_totp_mfa(command)
+        .current_user(auth)
         .await
         .map_err(ApiError::from_auth_error)?;
-    Ok(Json(result.into()))
+    Ok(Json(AuthMeResponseDto { user }))
 }
 
 pub async fn get_mfa_settings(
@@ -566,6 +611,10 @@ impl ApiError {
                 status: StatusCode::FORBIDDEN,
                 message: "Forbidden.".to_string(),
             },
+            AuthError::TooManyAttempts => Self::Message {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                message: "Too many attempts. Please wait before trying again.".to_string(),
+            },
             AuthError::DependencyFailure(_) => Self::Message {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 message: "Internal server error.".to_string(),
@@ -599,4 +648,12 @@ impl IntoResponse for ApiError {
 
 fn field_map(field: &str, message: &str) -> BTreeMap<String, Vec<String>> {
     BTreeMap::from([(field.to_string(), vec![message.to_string()])])
+}
+
+fn login_limiter_key(email: &str) -> String {
+    format!("login:{}", email.trim().to_ascii_lowercase())
+}
+
+fn mfa_limiter_key(kind: &str, ticket: &str) -> String {
+    format!("mfa:{kind}:{}", ticket.trim())
 }
