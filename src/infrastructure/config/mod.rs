@@ -3,6 +3,12 @@ use config::ConfigError;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmailDeliveryMode {
+    Resend,
+    Log,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub server_host: String,
@@ -19,7 +25,8 @@ pub struct AppConfig {
     pub auth_access_token_ttl_seconds: i64,
     pub auth_totp_setup_ttl_seconds: i64,
     pub auth_jwt_secret: String,
-    pub resend_api_key: String,
+    pub email_delivery_mode: EmailDeliveryMode,
+    pub resend_api_key: Option<String>,
     pub resend_from_email: String,
     pub verify_email_url_base: String,
     pub password_reset_url_base: String,
@@ -88,8 +95,12 @@ impl AppConfig {
                 600,
             )?,
             auth_jwt_secret: required_jwt_secret("APP_AUTH_JWT_SECRET")?,
-            resend_api_key: required_env("APP_RESEND_API_KEY")?,
-            resend_from_email: required_env("APP_RESEND_FROM_EMAIL")?,
+            email_delivery_mode: email_delivery_mode("APP_EMAIL_DELIVERY_MODE")?,
+            resend_api_key: resend_api_key()?,
+            resend_from_email: optional_env(
+                "APP_RESEND_FROM_EMAIL",
+                "BidMart <no-reply@updates.bidmart.com>",
+            ),
             verify_email_url_base: required_url_base("APP_VERIFY_EMAIL_URL_BASE")?,
             password_reset_url_base: required_url_base("APP_PASSWORD_RESET_URL_BASE")?,
             cors_allowed_origins: cors_allowed_origins("APP_CORS_ALLOWED_ORIGINS")?,
@@ -119,6 +130,31 @@ fn required_jwt_secret(key: &str) -> Result<String, ConfigError> {
 
 fn required_env(key: &str) -> Result<String, ConfigError> {
     std::env::var(key).map_err(|_| ConfigError::Message(format!("Missing {key}")))
+}
+
+fn optional_env(key: &str, default: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+fn email_delivery_mode(key: &str) -> Result<EmailDeliveryMode, ConfigError> {
+    parse_email_delivery_mode(key, &optional_env(key, "resend"))
+}
+
+fn parse_email_delivery_mode(key: &str, value: &str) -> Result<EmailDeliveryMode, ConfigError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "resend" => Ok(EmailDeliveryMode::Resend),
+        "log" => Ok(EmailDeliveryMode::Log),
+        _ => Err(ConfigError::Message(format!(
+            "Invalid {key}: expected 'resend' or 'log'"
+        ))),
+    }
+}
+
+fn resend_api_key() -> Result<Option<String>, ConfigError> {
+    match email_delivery_mode("APP_EMAIL_DELIVERY_MODE")? {
+        EmailDeliveryMode::Resend => required_env("APP_RESEND_API_KEY").map(Some),
+        EmailDeliveryMode::Log => Ok(std::env::var("APP_RESEND_API_KEY").ok()),
+    }
 }
 
 fn parsed_env<T>(key: &str) -> Result<T, ConfigError>
@@ -211,7 +247,8 @@ fn validate_cors_origin(key: &str, value: &str) -> Result<(), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_cors_allowed_origins_value, validate_absolute_http_url_base, validate_cors_origin,
+        parse_cors_allowed_origins_value, parse_email_delivery_mode,
+        validate_absolute_http_url_base, validate_cors_origin, EmailDeliveryMode,
     };
 
     #[test]
@@ -273,5 +310,18 @@ mod tests {
             validate_cors_origin("APP_CORS_ALLOWED_ORIGINS", "https://user@bidmart.example")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn email_delivery_mode_accepts_resend_and_log_only() {
+        assert_eq!(
+            parse_email_delivery_mode("APP_EMAIL_DELIVERY_MODE", "resend").unwrap(),
+            EmailDeliveryMode::Resend
+        );
+        assert_eq!(
+            parse_email_delivery_mode("APP_EMAIL_DELIVERY_MODE", "LOG").unwrap(),
+            EmailDeliveryMode::Log
+        );
+        assert!(parse_email_delivery_mode("APP_EMAIL_DELIVERY_MODE", "stdout").is_err());
     }
 }

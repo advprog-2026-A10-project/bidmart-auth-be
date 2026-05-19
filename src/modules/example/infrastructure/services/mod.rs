@@ -103,6 +103,27 @@ impl ResendVerificationEmailSender {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct LoggedEmailSender {
+    verify_email_url_base: String,
+    password_reset_url_base: String,
+}
+
+impl LoggedEmailSender {
+    pub fn new(verify_email_url_base: String, password_reset_url_base: String) -> Self {
+        Self {
+            verify_email_url_base,
+            password_reset_url_base,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum BidMartEmailSender {
+    Resend(ResendVerificationEmailSender),
+    Log(LoggedEmailSender),
+}
+
 #[async_trait]
 impl VerificationEmailSender for ResendVerificationEmailSender {
     async fn send_verification_email(
@@ -134,6 +155,25 @@ impl VerificationEmailSender for ResendVerificationEmailSender {
 }
 
 #[async_trait]
+impl VerificationEmailSender for LoggedEmailSender {
+    async fn send_verification_email(
+        &self,
+        to_email: &str,
+        raw_token: &str,
+    ) -> Result<(), AuthError> {
+        let verification_link = format!("{}{}", self.verify_email_url_base, raw_token);
+        tracing::info!(
+            target: "bidmart_auth_be::email",
+            email_type = "verification",
+            to_email,
+            verification_link,
+            "Local email delivery mode logged a verification link"
+        );
+        Ok(())
+    }
+}
+
+#[async_trait]
 impl MfaEmailSender for ResendVerificationEmailSender {
     async fn send_mfa_code(&self, to_email: &str, raw_code: &str) -> Result<(), AuthError> {
         let html = format!("<p>Your BidMart MFA code is:</p><p><strong>{raw_code}</strong></p>");
@@ -153,6 +193,20 @@ impl MfaEmailSender for ResendVerificationEmailSender {
             .await
             .map_err(|_| AuthError::DependencyFailure("failed to send mfa email".to_string()))?;
 
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl MfaEmailSender for LoggedEmailSender {
+    async fn send_mfa_code(&self, to_email: &str, raw_code: &str) -> Result<(), AuthError> {
+        tracing::info!(
+            target: "bidmart_auth_be::email",
+            email_type = "mfa",
+            to_email,
+            raw_code,
+            "Local email delivery mode logged an MFA code"
+        );
         Ok(())
     }
 }
@@ -183,6 +237,63 @@ impl PasswordResetEmailSender for ResendVerificationEmailSender {
         })?;
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl PasswordResetEmailSender for LoggedEmailSender {
+    async fn send_password_reset_email(
+        &self,
+        to_email: &str,
+        raw_token: &str,
+    ) -> Result<(), AuthError> {
+        let reset_link = format!("{}{}", self.password_reset_url_base, raw_token);
+        tracing::info!(
+            target: "bidmart_auth_be::email",
+            email_type = "password_reset",
+            to_email,
+            reset_link,
+            "Local email delivery mode logged a password reset link"
+        );
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl VerificationEmailSender for BidMartEmailSender {
+    async fn send_verification_email(
+        &self,
+        to_email: &str,
+        raw_token: &str,
+    ) -> Result<(), AuthError> {
+        match self {
+            Self::Resend(sender) => sender.send_verification_email(to_email, raw_token).await,
+            Self::Log(sender) => sender.send_verification_email(to_email, raw_token).await,
+        }
+    }
+}
+
+#[async_trait]
+impl MfaEmailSender for BidMartEmailSender {
+    async fn send_mfa_code(&self, to_email: &str, raw_code: &str) -> Result<(), AuthError> {
+        match self {
+            Self::Resend(sender) => sender.send_mfa_code(to_email, raw_code).await,
+            Self::Log(sender) => sender.send_mfa_code(to_email, raw_code).await,
+        }
+    }
+}
+
+#[async_trait]
+impl PasswordResetEmailSender for BidMartEmailSender {
+    async fn send_password_reset_email(
+        &self,
+        to_email: &str,
+        raw_token: &str,
+    ) -> Result<(), AuthError> {
+        match self {
+            Self::Resend(sender) => sender.send_password_reset_email(to_email, raw_token).await,
+            Self::Log(sender) => sender.send_password_reset_email(to_email, raw_token).await,
+        }
     }
 }
 
