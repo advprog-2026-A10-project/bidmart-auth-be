@@ -10,7 +10,7 @@ use resend_rs::Resend;
 use std::path::Path;
 use tokio::net::TcpListener;
 
-use infrastructure::config::AppConfig;
+use infrastructure::config::{AppConfig, EmailDeliveryMode};
 use infrastructure::database::create_pool;
 use infrastructure::logger::init_tracer;
 use modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
@@ -57,13 +57,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let password_hasher = Arc::new(ScryptPasswordHasher);
     let token_generator = Arc::new(RandomVerificationTokenGenerator);
     let token_hasher = Arc::new(Sha256VerificationTokenHasher);
-    let resend_client = Resend::new(&config.resend_api_key);
-    let email_sender = Arc::new(ResendVerificationEmailSender::new(
-        resend_client,
-        config.resend_from_email.clone(),
-        config.verify_email_url_base.clone(),
-        config.password_reset_url_base.clone(),
-    ));
+    let email_sender = Arc::new(match config.email_delivery_mode {
+        EmailDeliveryMode::Resend => ResendVerificationEmailSender::with_resend(
+            Resend::new(
+                config
+                    .resend_api_key
+                    .as_deref()
+                    .expect("resend api key should exist in resend mode"),
+            ),
+            config
+                .resend_from_email
+                .clone()
+                .expect("resend from email should exist in resend mode"),
+            config.verify_email_url_base.clone(),
+            config.password_reset_url_base.clone(),
+        ),
+        EmailDeliveryMode::Log => ResendVerificationEmailSender::log_only(
+            config.verify_email_url_base.clone(),
+            config.password_reset_url_base.clone(),
+        ),
+    });
     let clock = Arc::new(SystemClock);
     let jwt_service = Arc::new(Hs256JwtService::new(
         &config.auth_jwt_secret,

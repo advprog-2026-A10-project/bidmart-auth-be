@@ -81,25 +81,85 @@ impl Clock for SystemClock {
 
 #[derive(Clone)]
 pub struct ResendVerificationEmailSender {
-    client: Arc<Resend>,
-    from_email: String,
+    transport: EmailTransport,
     verify_email_url_base: String,
     password_reset_url_base: String,
 }
 
+#[derive(Clone)]
+enum EmailTransport {
+    Resend {
+        client: Arc<Resend>,
+        from_email: String,
+    },
+    Log,
+}
+
 impl ResendVerificationEmailSender {
-    pub fn new(
+    pub fn with_resend(
         client: Resend,
         from_email: String,
         verify_email_url_base: String,
         password_reset_url_base: String,
     ) -> Self {
         Self {
-            client: Arc::new(client),
-            from_email,
+            transport: EmailTransport::Resend {
+                client: Arc::new(client),
+                from_email,
+            },
             verify_email_url_base,
             password_reset_url_base,
         }
+    }
+
+    pub fn log_only(verify_email_url_base: String, password_reset_url_base: String) -> Self {
+        Self {
+            transport: EmailTransport::Log,
+            verify_email_url_base,
+            password_reset_url_base,
+        }
+    }
+
+    async fn send_email(
+        &self,
+        to_email: &str,
+        subject: &str,
+        html: &str,
+        text: &str,
+        dependency_error_message: &str,
+    ) -> Result<(), AuthError> {
+        match &self.transport {
+            EmailTransport::Resend { client, from_email } => {
+                let email = CreateEmailBaseOptions::new(
+                    from_email.clone(),
+                    vec![to_email.to_string()],
+                    subject,
+                )
+                .with_html(html)
+                .with_text(text);
+
+                client.emails.send(email).await.map_err(|error| {
+                    tracing::error!(
+                        target: "auth.email",
+                        %to_email,
+                        %subject,
+                        ?error,
+                        "Email provider send failed"
+                    );
+                    AuthError::DependencyFailure(dependency_error_message.to_string())
+                })?;
+            }
+            EmailTransport::Log => {
+                tracing::info!(
+                    target: "auth.email",
+                    %to_email,
+                    %subject,
+                    "APP_EMAIL_DELIVERY_MODE=log: skipping provider send"
+                );
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -117,19 +177,14 @@ impl VerificationEmailSender for ResendVerificationEmailSender {
         let text =
             format!("Verify your BidMart email address by opening this link: {verification_link}");
 
-        let email = CreateEmailBaseOptions::new(
-            self.from_email.clone(),
-            vec![to_email.to_string()],
+        self.send_email(
+            to_email,
             "Verify your BidMart email",
+            &html,
+            &text,
+            "failed to send verification email",
         )
-        .with_html(&html)
-        .with_text(&text);
-
-        self.client.emails.send(email).await.map_err(|_| {
-            AuthError::DependencyFailure("failed to send verification email".to_string())
-        })?;
-
-        Ok(())
+        .await
     }
 }
 
@@ -139,21 +194,14 @@ impl MfaEmailSender for ResendVerificationEmailSender {
         let html = format!("<p>Your BidMart MFA code is:</p><p><strong>{raw_code}</strong></p>");
         let text = format!("Your BidMart MFA code is: {raw_code}");
 
-        let email = CreateEmailBaseOptions::new(
-            self.from_email.clone(),
-            vec![to_email.to_string()],
+        self.send_email(
+            to_email,
             "Your BidMart MFA code",
+            &html,
+            &text,
+            "failed to send mfa email",
         )
-        .with_html(&html)
-        .with_text(&text);
-
-        self.client
-            .emails
-            .send(email)
-            .await
-            .map_err(|_| AuthError::DependencyFailure("failed to send mfa email".to_string()))?;
-
-        Ok(())
+        .await
     }
 }
 
@@ -170,19 +218,14 @@ impl PasswordResetEmailSender for ResendVerificationEmailSender {
         );
         let text = format!("Reset your BidMart password by opening this link: {reset_link}");
 
-        let email = CreateEmailBaseOptions::new(
-            self.from_email.clone(),
-            vec![to_email.to_string()],
+        self.send_email(
+            to_email,
             "Reset your BidMart password",
+            &html,
+            &text,
+            "failed to send password reset email",
         )
-        .with_html(&html)
-        .with_text(&text);
-
-        self.client.emails.send(email).await.map_err(|_| {
-            AuthError::DependencyFailure("failed to send password reset email".to_string())
-        })?;
-
-        Ok(())
+        .await
     }
 }
 

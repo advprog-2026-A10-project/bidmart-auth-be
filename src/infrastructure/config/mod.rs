@@ -3,6 +3,12 @@ use config::ConfigError;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmailDeliveryMode {
+    Resend,
+    Log,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub server_host: String,
@@ -19,8 +25,9 @@ pub struct AppConfig {
     pub auth_access_token_ttl_seconds: i64,
     pub auth_totp_setup_ttl_seconds: i64,
     pub auth_jwt_secret: String,
-    pub resend_api_key: String,
-    pub resend_from_email: String,
+    pub email_delivery_mode: EmailDeliveryMode,
+    pub resend_api_key: Option<String>,
+    pub resend_from_email: Option<String>,
     pub verify_email_url_base: String,
     pub password_reset_url_base: String,
     pub cors_allowed_origins: Vec<String>,
@@ -49,7 +56,7 @@ impl AppConfig {
             }
         }
 
-        validate_email_configuration()?;
+        let email_delivery_mode = validate_email_configuration()?;
 
         Ok(AppConfig {
             server_host: required_env("APP_SERVER_HOST")?,
@@ -93,8 +100,15 @@ impl AppConfig {
                 600,
             )?,
             auth_jwt_secret: required_jwt_secret("APP_AUTH_JWT_SECRET")?,
-            resend_api_key: required_env("APP_RESEND_API_KEY")?,
-            resend_from_email: required_env("APP_RESEND_FROM_EMAIL")?,
+            email_delivery_mode,
+            resend_api_key: match email_delivery_mode {
+                EmailDeliveryMode::Resend => Some(required_env("APP_RESEND_API_KEY")?),
+                EmailDeliveryMode::Log => None,
+            },
+            resend_from_email: match email_delivery_mode {
+                EmailDeliveryMode::Resend => Some(required_env("APP_RESEND_FROM_EMAIL")?),
+                EmailDeliveryMode::Log => None,
+            },
             verify_email_url_base: required_url_base("APP_VERIFY_EMAIL_URL_BASE")?,
             password_reset_url_base: required_url_base("APP_PASSWORD_RESET_URL_BASE")?,
             cors_allowed_origins: cors_allowed_origins("APP_CORS_ALLOWED_ORIGINS")?,
@@ -132,29 +146,32 @@ fn required_env(key: &str) -> Result<String, ConfigError> {
     std::env::var(key).map_err(|_| ConfigError::Message(format!("Missing {key}")))
 }
 
-fn validate_email_configuration() -> Result<(), ConfigError> {
+fn validate_email_configuration() -> Result<EmailDeliveryMode, ConfigError> {
     let delivery_mode = optional_env("APP_EMAIL_DELIVERY_MODE", "resend");
-    match delivery_mode.trim().to_ascii_lowercase().as_str() {
-        "resend" => {}
+    let mode = match delivery_mode.trim().to_ascii_lowercase().as_str() {
+        "resend" => EmailDeliveryMode::Resend,
         "log" if is_production_environment() => {
             return Err(ConfigError::Message(
                 "Invalid APP_EMAIL_DELIVERY_MODE: production cannot use log email delivery"
                     .to_string(),
             ));
         }
-        "log" => {}
+        "log" => EmailDeliveryMode::Log,
         _ => {
             return Err(ConfigError::Message(
                 "Invalid APP_EMAIL_DELIVERY_MODE: expected 'resend' or 'log'".to_string(),
             ));
         }
+    };
+
+    if mode == EmailDeliveryMode::Resend {
+        let api_key = required_env("APP_RESEND_API_KEY")?;
+        validate_resend_api_key("APP_RESEND_API_KEY", &api_key)?;
+        let from_email = required_env("APP_RESEND_FROM_EMAIL")?;
+        validate_from_email("APP_RESEND_FROM_EMAIL", &from_email)?;
     }
 
-    let api_key = required_env("APP_RESEND_API_KEY")?;
-    validate_resend_api_key("APP_RESEND_API_KEY", &api_key)?;
-    let from_email = required_env("APP_RESEND_FROM_EMAIL")?;
-    validate_from_email("APP_RESEND_FROM_EMAIL", &from_email)?;
-    Ok(())
+    Ok(mode)
 }
 
 fn is_production_environment() -> bool {

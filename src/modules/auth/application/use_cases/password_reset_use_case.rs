@@ -63,10 +63,25 @@ impl ForgotPasswordUseCase {
             .await?
         {
             Some(user) => user,
-            None => return Ok(forgot_success_result()),
+            None => {
+                tracing::debug!(
+                    target: "auth.forgot_password",
+                    email = %normalized_email,
+                    "No user found for forgot-password request"
+                );
+                return Ok(forgot_success_result());
+            }
         };
 
         if !user.is_active() || !user.is_email_verified() {
+            tracing::info!(
+                target: "auth.forgot_password",
+                user_id = %user.id,
+                email = %normalized_email,
+                is_active = user.is_active(),
+                is_email_verified = user.is_email_verified(),
+                "Skipping forgot-password email because user is inactive or unverified"
+            );
             return Ok(forgot_success_result());
         }
 
@@ -79,6 +94,12 @@ impl ForgotPasswordUseCase {
             if !active_token.is_expired_at(now)
                 && active_token.created_at + self.policy.password_reset_cooldown > now
             {
+                tracing::info!(
+                    target: "auth.forgot_password",
+                    user_id = %user.id,
+                    email = %normalized_email,
+                    "Skipping forgot-password email because cooldown is still active"
+                );
                 return Ok(forgot_success_result());
             }
         }
@@ -101,6 +122,12 @@ impl ForgotPasswordUseCase {
         self.email_sender
             .send_password_reset_email(&user.email, &raw_token)
             .await?;
+        tracing::info!(
+            target: "auth.forgot_password",
+            user_id = %user.id,
+            email = %normalized_email,
+            "Forgot-password reset email dispatch requested"
+        );
 
         Ok(forgot_success_result())
     }
