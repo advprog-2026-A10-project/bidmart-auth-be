@@ -406,6 +406,49 @@ async fn reset_password_rejects_invalid_expired_and_used_tokens() {
 }
 
 #[tokio::test]
+async fn reset_password_rejects_blank_token_after_trimming() {
+    let context = UseCaseTestContext::default();
+
+    let result = context
+        .reset_password_use_case()
+        .execute(ResetPasswordCommand {
+            token: "   ".to_string(),
+            password: "NewPassword123!".to_string(),
+        })
+        .await;
+
+    assert_eq!(result, Err(AuthError::PasswordResetTokenInvalid));
+    assert!(context.token_hasher.snapshot().hash_calls.is_empty());
+}
+
+#[tokio::test]
+async fn reset_password_trims_token_before_hash_lookup() {
+    let context = UseCaseTestContext::default();
+    let user = active_user("Trim Reset", "trim.reset@example.com");
+    context.user_repository.insert_user(user.clone());
+    context.seed_password_reset_token_from_raw(
+        user.id,
+        "trim-reset-token",
+        fixed_now() - Duration::minutes(1),
+        fixed_now() + Duration::minutes(1),
+    );
+
+    let result = context
+        .reset_password_use_case()
+        .execute(ResetPasswordCommand {
+            token: "  trim-reset-token  ".to_string(),
+            password: "NewPassword123!".to_string(),
+        })
+        .await;
+
+    result.expect("reset should succeed with trimmed token");
+    assert_eq!(
+        context.token_hasher.snapshot().hash_calls,
+        vec!["trim-reset-token".to_string()]
+    );
+}
+
+#[tokio::test]
 async fn login_contract_returns_user_with_access_token_or_mfa_ticket_shape() {
     let context = AuthUseCaseTestContext::default();
     let mut user = active_user("Login Contract", "login.contract@example.com");

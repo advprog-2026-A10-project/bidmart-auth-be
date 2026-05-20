@@ -34,12 +34,13 @@ impl VerifyEmailUseCase {
         &self,
         command: VerifyEmailCommand,
     ) -> Result<VerifyEmailResult, AuthError> {
-        if command.token.trim().is_empty() {
+        let raw_token = command.token.trim();
+        if raw_token.is_empty() {
             return Err(AuthError::VerificationTokenInvalid);
         }
 
         let now = self.clock.now();
-        let token_hash = self.token_hasher.hash(&command.token)?;
+        let token_hash = self.token_hasher.hash(raw_token)?;
         let token = self
             .token_repository
             .find_by_token_hash(&token_hash)

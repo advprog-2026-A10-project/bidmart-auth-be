@@ -157,3 +157,30 @@ async fn verify_email_must_hash_raw_token_before_lookup() {
         "token-hash::hash-lookup-token"
     );
 }
+
+#[tokio::test]
+async fn verify_email_trims_token_before_hash_lookup() {
+    let now = fixed_now();
+    let context = UseCaseTestContext::new(now);
+    let user = sample_user("Trim Token", "trim.token@example.com", now);
+    context.user_repository.insert_user(user.clone());
+    context.seed_token_from_raw(
+        user.id,
+        "trimmed-token",
+        now - Duration::seconds(10),
+        now + Duration::seconds(20),
+    );
+
+    let use_case = context.verify_email_use_case();
+    let result = use_case
+        .execute(VerifyEmailCommand {
+            token: "  trimmed-token  ".to_string(),
+        })
+        .await;
+
+    result.expect("verification should succeed with trimmed token");
+    assert_eq!(
+        context.token_hasher.snapshot().hash_calls,
+        vec!["trimmed-token".to_string()]
+    );
+}
