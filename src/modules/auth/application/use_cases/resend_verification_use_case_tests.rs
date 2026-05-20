@@ -164,3 +164,40 @@ async fn resend_verification_returns_generic_success_for_unknown_email() {
     );
     assert_eq!(context.email_sender.snapshot().sent_messages.len(), 0);
 }
+
+#[tokio::test]
+async fn resend_verification_returns_generic_success_when_email_sender_fails() {
+    let now = fixed_now();
+    let context = UseCaseTestContext::new(now);
+    let user = sample_user(
+        "Resend Sender Failure",
+        "resend.sender.failure@example.com",
+        now,
+    );
+    context.user_repository.insert_user(user.clone());
+    context
+        .token_generator
+        .push_token("fresh-resend-token".to_string());
+    *context
+        .email_sender
+        .send_error
+        .lock()
+        .expect("error lock poisoned") = Some(AuthError::DependencyFailure(
+        "smtp transport error".to_string(),
+    ));
+
+    let use_case = context.resend_verification_use_case();
+    let result = use_case
+        .execute(ResendVerificationCommand {
+            email: user.email.clone(),
+        })
+        .await;
+
+    let resent = result.expect("resend should remain generic on sender failure");
+    assert_eq!(
+        resent.message,
+        "If the account exists and requires verification, a verification email has been sent."
+    );
+    assert_eq!(context.email_sender.snapshot().sent_messages.len(), 0);
+    assert_eq!(context.token_repository.snapshot().saved_tokens.len(), 1);
+}

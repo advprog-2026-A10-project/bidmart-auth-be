@@ -94,9 +94,20 @@ impl ResendVerificationUseCase {
         );
 
         self.token_repository.save(token).await?;
-        self.email_sender
+        if let Err(error) = self
+            .email_sender
             .send_verification_email(&user.email, &raw_token)
-            .await?;
+            .await
+        {
+            tracing::error!(
+                target: "auth.resend_verification",
+                user_id = %user.id,
+                email = %user.email,
+                ?error,
+                "Failed to dispatch verification email; returning generic success"
+            );
+            return Ok(success_result());
+        }
 
         Ok(success_result())
     }

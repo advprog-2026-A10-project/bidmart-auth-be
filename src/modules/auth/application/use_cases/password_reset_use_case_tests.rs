@@ -53,6 +53,46 @@ async fn forgot_password_sends_reset_email_for_existing_verified_user() {
 }
 
 #[tokio::test]
+async fn forgot_password_returns_generic_success_when_email_sender_fails() {
+    let context = UseCaseTestContext::default();
+    let user = active_user("Reset Sender Failure", "reset.sender.failure@example.com");
+    context.user_repository.insert_user(user.clone());
+    context
+        .token_generator
+        .push_token("raw-reset-token".to_string());
+    *context
+        .email_sender
+        .send_error
+        .lock()
+        .expect("error lock poisoned") = Some(AuthError::DependencyFailure(
+        "smtp transport error".to_string(),
+    ));
+
+    let result = context
+        .forgot_password_use_case()
+        .execute(ForgotPasswordCommand {
+            email: user.email.clone(),
+        })
+        .await
+        .expect("forgot password should still return generic success");
+
+    assert_eq!(result.message, FORGOT_PASSWORD_MESSAGE);
+    assert!(context
+        .email_sender
+        .snapshot()
+        .sent_password_resets
+        .is_empty());
+    assert_eq!(
+        context
+            .password_reset_token_repository
+            .snapshot()
+            .saved_tokens
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn forgot_password_returns_generic_success_for_unknown_email_without_sending() {
     let context = UseCaseTestContext::default();
 

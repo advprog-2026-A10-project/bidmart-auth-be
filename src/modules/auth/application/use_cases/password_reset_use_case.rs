@@ -119,9 +119,20 @@ impl ForgotPasswordUseCase {
                 now + self.policy.password_reset_token_ttl,
             ))
             .await?;
-        self.email_sender
+        if let Err(error) = self
+            .email_sender
             .send_password_reset_email(&user.email, &raw_token)
-            .await?;
+            .await
+        {
+            tracing::error!(
+                target: "auth.forgot_password",
+                user_id = %user.id,
+                email = %normalized_email,
+                ?error,
+                "Failed to dispatch forgot-password email; returning generic success"
+            );
+            return Ok(forgot_success_result());
+        }
         tracing::info!(
             target: "auth.forgot_password",
             user_id = %user.id,
