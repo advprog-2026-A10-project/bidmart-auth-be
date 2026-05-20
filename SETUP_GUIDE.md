@@ -4,6 +4,9 @@ This document provides instructions for agents to replicate the `bidmart-auth-be
 
 For current service-to-service token validation contract, see [`docs/AUTH_VALIDATE_CONTRACT.md`](./docs/AUTH_VALIDATE_CONTRACT.md).
 
+> **Important:** this guide contains historical scaffold snippets from earlier milestones (including `/api/v1/*` examples).  
+> The current production contract for this repository uses top-level routes such as `/auth/*`, `/settings/*`, and `/auth/validate` as implemented in `src/modules/auth/infrastructure/mod.rs`.
+
 ## Project Overview
 
 - **Project Name**: bidmart-auth-be

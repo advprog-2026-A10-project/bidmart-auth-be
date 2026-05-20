@@ -498,6 +498,11 @@ pub enum ApiError {
 
 impl ApiError {
     fn from_json_rejection(rejection: JsonRejection) -> Self {
+        tracing::warn!(
+            status = rejection.status().as_u16(),
+            reason = %rejection,
+            "invalid_json_payload"
+        );
         Self::Message {
             status: rejection.status(),
             message: "Invalid JSON payload.".to_string(),
@@ -505,6 +510,7 @@ impl ApiError {
     }
 
     fn from_validation_errors(errors: ValidationErrors) -> Self {
+        tracing::warn!(errors = ?errors, "validation_error");
         let mut field_errors = BTreeMap::new();
         for (field, errors_for_field) in errors.field_errors() {
             let messages = errors_for_field
@@ -527,7 +533,8 @@ impl ApiError {
     }
 
     pub fn from_auth_error(error: AuthError) -> Self {
-        match error {
+        let error_description = error.to_string();
+        let mapped = match error {
             AuthError::InvalidName => Self::Validation {
                 message: "Validation error".to_string(),
                 errors: field_map("name", "Name is required"),
@@ -641,6 +648,30 @@ impl ApiError {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 message: "Internal server error.".to_string(),
             },
+        };
+
+        let status = mapped.status_code();
+        if status.is_server_error() {
+            tracing::error!(
+                status = status.as_u16(),
+                error = %error_description,
+                "auth_error_mapped_to_server_response"
+            );
+        } else {
+            tracing::warn!(
+                status = status.as_u16(),
+                error = %error_description,
+                "auth_error_mapped_to_client_response"
+            );
+        }
+
+        mapped
+    }
+
+    fn status_code(&self) -> StatusCode {
+        match self {
+            Self::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::Message { status, .. } => *status,
         }
     }
 }

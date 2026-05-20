@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
-use axum::http::{header, HeaderValue, Method, StatusCode};
+use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
+use axum::middleware;
 use axum::routing::{delete, get, post};
 use axum::Router;
 use serde_json::json;
 use tower_http::cors::CorsLayer;
 
+use crate::infrastructure::logger::request_trace_middleware;
 use crate::modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
 use crate::modules::auth::application::use_cases::password_reset_use_case::{
     ForgotPasswordUseCase, ResetPasswordUseCase,
@@ -103,7 +105,12 @@ pub fn create_router_with_cors_origins(state: AppState, allowed_origins: &[Strin
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::ACCEPT, header::AUTHORIZATION, header::CONTENT_TYPE]);
+        .allow_headers([
+            header::ACCEPT,
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-request-id"),
+        ]);
 
     let app = Router::new()
         .route("/health", get(health_check))
@@ -202,7 +209,9 @@ pub fn create_router_with_cors_origins(state: AppState, allowed_origins: &[Strin
             "/settings/security/mfa/disable",
             post(controllers::disable_mfa).options(cors_preflight),
         );
-    app.with_state(state).layer(cors)
+    app.with_state(state)
+        .layer(middleware::from_fn(request_trace_middleware))
+        .layer(cors)
 }
 
 async fn cors_preflight() -> StatusCode {
