@@ -466,7 +466,7 @@ async fn login_contract_returns_user_with_access_token_or_mfa_ticket_shape() {
         .login(crate::modules::auth::application::dto::LoginCommand {
             email: "login.contract@example.com".to_string(),
             password: "correct-password".to_string(),
-        })
+        }, crate::modules::auth::application::dto::SessionContext::unknown())
         .await
         .expect("login should succeed");
 
@@ -494,7 +494,7 @@ async fn login_contract_returns_user_with_access_token_or_mfa_ticket_shape() {
         .login(crate::modules::auth::application::dto::LoginCommand {
             email: "mfa.contract@example.com".to_string(),
             password: "mfa-password".to_string(),
-        })
+        }, crate::modules::auth::application::dto::SessionContext::unknown())
         .await
         .expect("mfa login should produce ticket");
 

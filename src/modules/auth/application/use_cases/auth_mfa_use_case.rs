@@ -7,11 +7,11 @@ use crate::modules::auth::application::dto::{
     AuthTokenResult, AuthenticatedLoginResult, AuthenticatedUserContext, ChangePasswordCommand,
     DisableMfaCommand, LoginCommand, LoginOutcome, MessageResponseDto, MfaSettingsDto,
     NotificationPreferencesDto, NotificationPreferencesResponseDto, PublicUserDto,
-    SendEmailMfaCommand, SessionDto, SessionsResponseDto, SettingsProfileResponseDto,
-    SettingsProfileUserDto, SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult,
-    UpdateNotificationPreferencesCommand, UpdateProfileCommand, UpdateProfileResponseDto,
-    VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand,
-    VerifyTotpSetupCommand,
+    SendEmailMfaCommand, SessionContext, SessionDto, SessionsResponseDto,
+    SettingsProfileResponseDto, SettingsProfileUserDto, SetupEmailMfaCommand, SetupTotpCommand,
+    SetupTotpResult, UpdateNotificationPreferencesCommand, UpdateProfileCommand,
+    UpdateProfileResponseDto, VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand,
+    VerifyTotpMfaCommand, VerifyTotpSetupCommand,
 };
 use crate::modules::auth::application::use_cases::policy::AuthPolicy;
 use crate::modules::auth::domain::entities::{
@@ -82,7 +82,11 @@ impl AuthMfaUseCase {
         }
     }
 
-    pub async fn login(&self, command: LoginCommand) -> Result<LoginOutcome, AuthError> {
+    pub async fn login(
+        &self,
+        command: LoginCommand,
+        session: SessionContext,
+    ) -> Result<LoginOutcome, AuthError> {
         let normalized_email = normalize_email(&command.email);
         if !normalized_email.validate_email() {
             return Err(AuthError::InvalidCredentials);
@@ -123,7 +127,7 @@ impl AuthMfaUseCase {
             });
         }
 
-        let access_token = self.issue_access_token(&user, true).await?;
+        let access_token = self.issue_access_token(&user, true, session).await?;
         Ok(LoginOutcome::Authenticated(AuthenticatedLoginResult {
             user_id: access_token.user_id,
             name: access_token.name,
@@ -177,6 +181,7 @@ impl AuthMfaUseCase {
     pub async fn verify_email_mfa(
         &self,
         command: VerifyEmailMfaCommand,
+        session: SessionContext,
     ) -> Result<AuthTokenResult, AuthError> {
         let ticket = self.valid_mfa_ticket(&command.mfa_ticket).await?;
         let user = self.require_user_for_mfa_ticket(&ticket).await?;
@@ -209,12 +214,13 @@ impl AuthMfaUseCase {
             return Err(AuthError::MfaTicketInvalid);
         }
 
-        self.issue_access_token(&user, true).await
+        self.issue_access_token(&user, true, session).await
     }
 
     pub async fn verify_totp_mfa(
         &self,
         command: VerifyTotpMfaCommand,
+        session: SessionContext,
     ) -> Result<AuthTokenResult, AuthError> {
         let ticket = self.valid_mfa_ticket(&command.mfa_ticket).await?;
         let user = self.require_user_for_mfa_ticket(&ticket).await?;
@@ -239,7 +245,7 @@ impl AuthMfaUseCase {
             return Err(AuthError::MfaTicketInvalid);
         }
 
-        self.issue_access_token(&user, true).await
+        self.issue_access_token(&user, true, session).await
     }
 
     pub async fn get_mfa_settings(
@@ -641,6 +647,7 @@ impl AuthMfaUseCase {
         &self,
         user: &User,
         mfa_satisfied: bool,
+        session: SessionContext,
     ) -> Result<AuthTokenResult, AuthError> {
         let now = self.clock.now();
         let issued = self
@@ -655,11 +662,11 @@ impl AuthMfaUseCase {
                 user_id: user.id,
                 jti_hash,
                 mfa_satisfied,
-                device: "Unknown device".to_string(),
-                browser: "Unknown browser".to_string(),
-                os: "Unknown OS".to_string(),
-                ip: "Unknown IP".to_string(),
-                location: "Unknown location".to_string(),
+                device: session.device,
+                browser: session.browser,
+                os: session.os,
+                ip: session.ip,
+                location: session.location,
                 created_at: now,
                 last_active_at: now,
                 expires_at: session_expires_at,

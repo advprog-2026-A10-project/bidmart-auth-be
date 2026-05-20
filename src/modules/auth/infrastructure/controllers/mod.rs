@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::header::SET_COOKIE;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
@@ -14,8 +14,8 @@ use crate::modules::auth::application::dto::{
     LoginCommand, LoginResponseDto, MessageResponseDto, MfaSettingsDto,
     NotificationPreferencesResponseDto, RegisterRequestCommand, RegisterResponseDto,
     RegisterUserCommand, ResendVerificationCommand, ResetPasswordCommand, SendEmailMfaCommand,
-    SessionsResponseDto, SettingsProfileResponseDto, SetupEmailMfaCommand, SetupTotpCommand,
-    SetupTotpResult, UpdateNotificationPreferencesCommand, UpdateProfileCommand,
+    SessionContext, SessionsResponseDto, SettingsProfileResponseDto, SetupEmailMfaCommand,
+    SetupTotpCommand, SetupTotpResult, UpdateNotificationPreferencesCommand, UpdateProfileCommand,
     UpdateProfileResponseDto, ValidateSessionResponseDto, VerifyEmailCommand,
     VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand,
     VerifyTotpSetupCommand, LOGOUT_SUCCESS_MESSAGE,
@@ -74,6 +74,7 @@ pub async fn verify_email(
 
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     payload: Result<Json<LoginCommand>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
@@ -83,7 +84,7 @@ pub async fn login(
 
     let result = state
         .auth_mfa_use_case
-        .login(command)
+        .login(command, session_context_from_headers(&headers))
         .await
         .map_err(ApiError::from_auth_error)?;
 
@@ -183,6 +184,7 @@ pub async fn send_email_mfa(
 
 pub async fn verify_email_mfa(
     State(state): State<AppState>,
+    headers: HeaderMap,
     payload: Result<Json<VerifyEmailMfaCommand>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
@@ -191,7 +193,7 @@ pub async fn verify_email_mfa(
         .map_err(ApiError::from_validation_errors)?;
     let result = state
         .auth_mfa_use_case
-        .verify_email_mfa(command)
+        .verify_email_mfa(command, session_context_from_headers(&headers))
         .await
         .map_err(ApiError::from_auth_error)?;
     let response = AccessTokenResponseDto::from(result);
@@ -201,6 +203,7 @@ pub async fn verify_email_mfa(
 
 pub async fn verify_totp_mfa(
     State(state): State<AppState>,
+    headers: HeaderMap,
     payload: Result<Json<VerifyTotpMfaCommand>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
@@ -209,7 +212,7 @@ pub async fn verify_totp_mfa(
         .map_err(ApiError::from_validation_errors)?;
     let result = state
         .auth_mfa_use_case
-        .verify_totp_mfa(command)
+        .verify_totp_mfa(command, session_context_from_headers(&headers))
         .await
         .map_err(ApiError::from_auth_error)?;
     let response = AccessTokenResponseDto::from(result);
@@ -826,4 +829,86 @@ fn with_clear_session_cookie(state: &AppState, payload: Json<impl Serialize>) ->
 
 fn field_map(field: &str, message: &str) -> BTreeMap<String, Vec<String>> {
     BTreeMap::from([(field.to_string(), vec![message.to_string()])])
+}
+
+fn session_context_from_headers(headers: &HeaderMap) -> SessionContext {
+    let unknown = SessionContext::unknown();
+    let user_agent = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let (device, browser, os) = match user_agent {
+        Some(ua) => (parse_device(ua), parse_browser(ua), parse_os(ua)),
+        None => (unknown.device, unknown.browser, unknown.os),
+    };
+
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(ToString::to_string)
+        .unwrap_or(unknown.ip);
+
+    SessionContext {
+        device,
+        browser,
+        os,
+        ip,
+        location: unknown.location,
+    }
+}
+
+fn parse_browser(ua: &str) -> String {
+    const CANDIDATES: &[(&str, &str)] = &[
+        ("Edg/", "Edge"),
+        ("OPR/", "Opera"),
+        ("Opera", "Opera"),
+        ("Chrome/", "Chrome"),
+        ("Firefox/", "Firefox"),
+        ("Safari/", "Safari"),
+    ];
+    for (needle, label) in CANDIDATES {
+        if ua.contains(needle) {
+            return (*label).to_string();
+        }
+    }
+    "Unknown browser".to_string()
+}
+
+fn parse_os(ua: &str) -> String {
+    const CANDIDATES: &[(&str, &str)] = &[
+        ("Windows NT", "Windows"),
+        ("Mac OS X", "macOS"),
+        ("Android", "Android"),
+        ("iPhone OS", "iOS"),
+        ("iPad", "iPadOS"),
+        ("Linux", "Linux"),
+    ];
+    for (needle, label) in CANDIDATES {
+        if ua.contains(needle) {
+            return (*label).to_string();
+        }
+    }
+    "Unknown OS".to_string()
+}
+
+fn parse_device(ua: &str) -> String {
+    if ua.contains("Mobile") || ua.contains("Android") || ua.contains("iPhone") {
+        "Mobile".to_string()
+    } else if ua.contains("iPad") || ua.contains("Tablet") {
+        "Tablet".to_string()
+    } else {
+        "Desktop".to_string()
+    }
 }

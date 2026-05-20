@@ -285,6 +285,33 @@ pub struct AuthenticatedUserContext {
     pub session_jti_hash: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionContext {
+    pub device: String,
+    pub browser: String,
+    pub os: String,
+    pub ip: String,
+    pub location: String,
+}
+
+impl SessionContext {
+    pub fn unknown() -> Self {
+        Self {
+            device: "Unknown device".to_string(),
+            browser: "Unknown browser".to_string(),
+            os: "Unknown OS".to_string(),
+            ip: "Unknown IP".to_string(),
+            location: "Unknown location".to_string(),
+        }
+    }
+}
+
+impl Default for SessionContext {
+    fn default() -> Self {
+        Self::unknown()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MfaSettingsDto {
     #[serde(rename = "mfaEnabled")]

@@ -3,8 +3,8 @@ use uuid::Uuid;
 
 use crate::modules::auth::application::dto::{
     AuthenticatedUserContext, DisableMfaCommand, LoginCommand, LoginOutcome, SendEmailMfaCommand,
-    SetupEmailMfaCommand, SetupTotpCommand, VerifyEmailMfaCommand, VerifyEmailMfaSetupCommand,
-    VerifyTotpMfaCommand, VerifyTotpSetupCommand,
+    SessionContext, SetupEmailMfaCommand, SetupTotpCommand, VerifyEmailMfaCommand,
+    VerifyEmailMfaSetupCommand, VerifyTotpMfaCommand, VerifyTotpSetupCommand,
 };
 use crate::modules::auth::application::use_cases::test_support::{
     fixed_now, sample_user, AuthUseCaseTestContext,
@@ -36,7 +36,7 @@ async fn login_rejects_unverified_user_without_issuing_jwt() {
         .login(LoginCommand {
             email: " Pending@Example.com ".to_string(),
             password: "correct-password".to_string(),
-        })
+        }, SessionContext::unknown())
         .await;
 
     assert_eq!(result, Err(AuthError::EmailNotVerified));
@@ -61,14 +61,14 @@ async fn login_bad_credentials_are_generic_for_missing_user_and_bad_password() {
         .login(LoginCommand {
             email: "missing@example.com".to_string(),
             password: "whatever-password".to_string(),
-        })
+        }, SessionContext::unknown())
         .await;
     let wrong_password = context
         .auth_mfa_use_case()
         .login(LoginCommand {
             email: "known@example.com".to_string(),
             password: "wrong-password".to_string(),
-        })
+        }, SessionContext::unknown())
         .await;
 
     assert_eq!(missing, Err(AuthError::InvalidCredentials));
@@ -92,7 +92,7 @@ async fn login_for_verified_user_without_mfa_issues_access_token_and_persists_se
         .login(LoginCommand {
             email: "verified@example.com".to_string(),
             password: "correct-password".to_string(),
-        })
+        }, SessionContext::unknown())
         .await
         .expect("login succeeds");
 
@@ -133,7 +133,7 @@ async fn login_for_mfa_enabled_user_issues_scoped_mfa_ticket_only() {
         .login(LoginCommand {
             email: "mfa@example.com".to_string(),
             password: "correct-password".to_string(),
-        })
+        }, SessionContext::unknown())
         .await
         .expect("login returns mfa challenge");
 
@@ -410,7 +410,7 @@ async fn email_mfa_verify_success_invalid_expired_and_replay_are_enforced() {
         .verify_email_mfa(VerifyEmailMfaCommand {
             mfa_ticket: "ticket".to_string(),
             code: "123456".to_string(),
-        })
+        }, SessionContext::unknown())
         .await
         .expect("email mfa succeeds");
     assert_eq!(success.access_token, "mfa.access.jwt");
@@ -420,7 +420,7 @@ async fn email_mfa_verify_success_invalid_expired_and_replay_are_enforced() {
         .verify_email_mfa(VerifyEmailMfaCommand {
             mfa_ticket: "ticket".to_string(),
             code: "123456".to_string(),
-        })
+        }, SessionContext::unknown())
         .await;
     assert_eq!(replay, Err(AuthError::MfaTicketInvalid));
 
@@ -434,7 +434,7 @@ async fn email_mfa_verify_success_invalid_expired_and_replay_are_enforced() {
         .verify_email_mfa(VerifyEmailMfaCommand {
             mfa_ticket: "expired-ticket".to_string(),
             code: "123456".to_string(),
-        })
+        }, SessionContext::unknown())
         .await;
     assert_eq!(expired, Err(AuthError::MfaTicketExpired));
 
@@ -448,7 +448,7 @@ async fn email_mfa_verify_success_invalid_expired_and_replay_are_enforced() {
         .verify_email_mfa(VerifyEmailMfaCommand {
             mfa_ticket: "invalid-code-ticket".to_string(),
             code: "999999".to_string(),
-        })
+        }, SessionContext::unknown())
         .await;
     assert_eq!(invalid, Err(AuthError::MfaCodeInvalid));
 }
@@ -473,7 +473,7 @@ async fn totp_mfa_verify_success_invalid_expired_and_replay_are_enforced() {
         .verify_totp_mfa(VerifyTotpMfaCommand {
             mfa_ticket: "totp-ticket".to_string(),
             code: "123456".to_string(),
-        })
+        }, SessionContext::unknown())
         .await
         .expect("totp mfa succeeds");
     assert_eq!(success.access_token, "totp.access.jwt");
@@ -483,7 +483,7 @@ async fn totp_mfa_verify_success_invalid_expired_and_replay_are_enforced() {
         .verify_totp_mfa(VerifyTotpMfaCommand {
             mfa_ticket: "totp-ticket".to_string(),
             code: "123456".to_string(),
-        })
+        }, SessionContext::unknown())
         .await;
     assert_eq!(replay, Err(AuthError::MfaTicketInvalid));
 
@@ -497,7 +497,7 @@ async fn totp_mfa_verify_success_invalid_expired_and_replay_are_enforced() {
         .verify_totp_mfa(VerifyTotpMfaCommand {
             mfa_ticket: "bad-totp-ticket".to_string(),
             code: "000000".to_string(),
-        })
+        }, SessionContext::unknown())
         .await;
     assert_eq!(invalid, Err(AuthError::MfaCodeInvalid));
 }
