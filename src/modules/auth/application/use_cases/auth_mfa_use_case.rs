@@ -155,7 +155,7 @@ impl AuthMfaUseCase {
             .invalidate_active_codes_for_user(user.id, EmailMfaCodePurpose::Login, now)
             .await?;
 
-        let raw_code = self.token_generator.generate()?;
+        let raw_code = mfa_email_code_from_seed(&self.token_generator.generate()?);
         let code_hash = self.token_hasher.hash(&raw_code)?;
         self.email_mfa_code_repository
             .save(EmailMfaCode::new(
@@ -317,6 +317,9 @@ impl AuthMfaUseCase {
             .verify(&command.current_password, &user.password_hash)?
         {
             return Err(AuthError::CurrentPasswordInvalid);
+        }
+        if command.new_password.chars().count() < self.policy.min_password_length {
+            return Err(AuthError::WeakPassword);
         }
         let password_hash = self.password_hasher.hash(&command.new_password)?;
         self.user_repository
@@ -511,7 +514,7 @@ impl AuthMfaUseCase {
         self.email_mfa_code_repository
             .invalidate_active_codes_for_user(user.id, EmailMfaCodePurpose::Setup, now)
             .await?;
-        let raw_code = self.token_generator.generate()?;
+        let raw_code = mfa_email_code_from_seed(&self.token_generator.generate()?);
         let code_hash = self.token_hasher.hash(&raw_code)?;
         self.email_mfa_code_repository
             .save(EmailMfaCode::new(
@@ -727,4 +730,17 @@ fn primary_mfa_type(user: &User) -> String {
     } else {
         "email".to_string()
     }
+}
+
+fn mfa_email_code_from_seed(seed: &str) -> String {
+    let trimmed = seed.trim();
+    if trimmed.len() == 6 && trimmed.chars().all(|ch| ch.is_ascii_digit()) {
+        return trimmed.to_string();
+    }
+
+    let mut acc: u64 = 0;
+    for byte in trimmed.as_bytes() {
+        acc = acc.wrapping_mul(131).wrapping_add(u64::from(*byte));
+    }
+    format!("{:06}", acc % 1_000_000)
 }

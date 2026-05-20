@@ -188,6 +188,34 @@ async fn email_mfa_send_enforces_cooldown_and_code_expiry() {
 }
 
 #[tokio::test]
+async fn email_mfa_send_normalizes_generated_code_to_six_digits() {
+    let context = AuthUseCaseTestContext::default();
+    let mut user = verified_user("mfa-code-shape@example.com");
+    user.mfa_email_enabled = true;
+    context.user_repository.insert_user(user.clone());
+    context.seed_mfa_ticket(user.id, "ticket", fixed_now() + Duration::minutes(5));
+    context
+        .token_generator
+        .push_token("raw-seed-with-symbols".to_string());
+
+    context
+        .auth_mfa_use_case()
+        .send_email_mfa(SendEmailMfaCommand {
+            mfa_ticket: "ticket".to_string(),
+        })
+        .await
+        .expect("email mfa send succeeds");
+
+    let sent = context.email_sender.snapshot().sent_messages;
+    assert_eq!(sent.len(), 1);
+    let sent_code = &sent[0].1;
+    assert_eq!(sent_code.len(), 6);
+    assert!(sent_code.chars().all(|ch| ch.is_ascii_digit()));
+    let saved_code = context.email_mfa_code_repository.snapshot().saved_codes[0].clone();
+    assert_eq!(saved_code.code_hash, format!("token-hash::{sent_code}"));
+}
+
+#[tokio::test]
 async fn settings_email_mfa_setup_enforces_cooldown() {
     let context = AuthUseCaseTestContext::default();
     let user = verified_user("settings-email-cooldown@example.com");
@@ -325,6 +353,39 @@ async fn change_password_revokes_other_active_sessions_after_success() {
         current_session.expires_at
     );
     assert_eq!(sessions["other-jti-hash"].expires_at, fixed_now());
+}
+
+#[tokio::test]
+async fn change_password_rejects_weak_new_password() {
+    let context = AuthUseCaseTestContext::default();
+    let user = verified_user("weak-password-change@example.com");
+    context.user_repository.insert_user(user.clone());
+    context
+        .password_verifier
+        .accept("correct-password", "hash::correct-password");
+
+    let result = context
+        .auth_mfa_use_case()
+        .change_password(
+            AuthenticatedUserContext {
+                user_id: user.id,
+                mfa_satisfied: true,
+                session_jti_hash: Some("current-jti-hash".to_string()),
+            },
+            crate::modules::auth::application::dto::ChangePasswordCommand {
+                current_password: "correct-password".to_string(),
+                new_password: "short".to_string(),
+            },
+        )
+        .await;
+
+    assert_eq!(result, Err(AuthError::WeakPassword));
+    assert!(context.password_hasher.snapshot().hash_calls.is_empty());
+    assert!(context
+        .user_repository
+        .snapshot()
+        .update_password_hash_calls
+        .is_empty());
 }
 
 #[tokio::test]
