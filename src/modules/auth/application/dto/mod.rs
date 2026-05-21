@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use validator::Validate;
 
+pub use crate::modules::auth::domain::entities::{AuthenticatedUserContext, IssuedAccessToken};
+
 pub const REGISTER_SUCCESS_MESSAGE: &str = "Registration successful. Please verify your email.";
 pub const VERIFY_EMAIL_SUCCESS_MESSAGE: &str = "Email verified.";
 pub const RESEND_VERIFICATION_MESSAGE: &str =
@@ -279,13 +281,6 @@ pub struct DisableMfaCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthenticatedUserContext {
-    pub user_id: Uuid,
-    pub mfa_satisfied: bool,
-    pub session_jti_hash: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionContext {
     pub device: String,
     pub browser: String,
@@ -318,13 +313,6 @@ pub struct MfaSettingsDto {
     pub mfa_enabled: bool,
     #[serde(rename = "mfaType")]
     pub mfa_type: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IssuedAccessToken {
-    pub token: String,
-    pub jti: String,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

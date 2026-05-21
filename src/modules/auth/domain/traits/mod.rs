@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::modules::auth::application::dto::{AuthenticatedUserContext, IssuedAccessToken};
 use crate::modules::auth::domain::entities::{
-    AuthSession, EmailMfaCode, EmailMfaCodePurpose, EmailVerificationToken, MfaTicket,
-    NotificationPreferences, PasswordResetToken, TotpSetup, User,
+    AuthSession, AuthenticatedUserContext, EmailMfaCode, EmailMfaCodePurpose,
+    EmailVerificationToken, IssuedAccessToken, MfaTicket, NotificationPreferences,
+    PasswordResetToken, TotpSetup, User,
 };
 use crate::modules::auth::domain::errors::AuthError;
 
