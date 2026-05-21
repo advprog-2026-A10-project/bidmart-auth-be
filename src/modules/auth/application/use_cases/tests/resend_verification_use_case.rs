@@ -1,10 +1,9 @@
 use chrono::Duration;
 
 use crate::modules::auth::application::dto::ResendVerificationCommand;
-use crate::modules::auth::application::use_cases::test_support::{
-    fixed_now, sample_user, short_cooldown_policy, UseCaseTestContext,
-};
 use crate::modules::auth::domain::errors::AuthError;
+
+use super::support::{fixed_now, sample_user, short_cooldown_policy, UseCaseTestContext};
 
 #[tokio::test]
 async fn resend_verification_succeeds_for_unverified_user_and_dispatches_email() {

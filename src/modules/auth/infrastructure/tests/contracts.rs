@@ -7,7 +7,7 @@ use chrono::Duration;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use crate::modules::auth::application::use_cases::test_support::{
+use crate::modules::auth::application::use_cases::tests::support::{
     fixed_now, sample_user, short_cooldown_policy, AuthUseCaseTestContext, FakeTokenHasher,
     UseCaseTestContext,
 };

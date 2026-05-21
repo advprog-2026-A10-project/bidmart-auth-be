@@ -1,10 +1,9 @@
 use chrono::Duration;
 
 use crate::modules::auth::application::dto::VerifyEmailCommand;
-use crate::modules::auth::application::use_cases::test_support::{
-    fixed_now, sample_user, UseCaseTestContext,
-};
 use crate::modules::auth::domain::errors::AuthError;
+
+use super::support::{fixed_now, sample_user, UseCaseTestContext};
 
 #[tokio::test]
 async fn verify_email_with_valid_token_marks_user_verified_and_consumes_token() {

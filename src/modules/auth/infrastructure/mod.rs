@@ -227,4 +227,4 @@ async fn ready_check() -> axum::response::Json<serde_json::Value> {
 }
 
 #[cfg(test)]
-mod contract_tests;
+mod tests;

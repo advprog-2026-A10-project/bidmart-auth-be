@@ -1,8 +1,7 @@
 use crate::modules::auth::application::dto::RegisterUserCommand;
-use crate::modules::auth::application::use_cases::test_support::{
-    fixed_now, sample_user, short_cooldown_policy, UseCaseTestContext,
-};
 use crate::modules::auth::domain::errors::AuthError;
+
+use super::support::{fixed_now, sample_user, short_cooldown_policy, UseCaseTestContext};
 
 fn normalized_email(input: &str) -> String {
     input.trim().to_ascii_lowercase()

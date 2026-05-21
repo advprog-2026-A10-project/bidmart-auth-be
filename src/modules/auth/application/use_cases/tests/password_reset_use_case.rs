@@ -4,11 +4,12 @@ use crate::modules::auth::application::dto::{
     ForgotPasswordCommand, ResetPasswordCommand, FORGOT_PASSWORD_MESSAGE,
     RESET_PASSWORD_SUCCESS_MESSAGE,
 };
-use crate::modules::auth::application::use_cases::test_support::{
-    fixed_now, sample_user, AuthUseCaseTestContext, FakeTokenHasher, UseCaseTestContext,
-};
 use crate::modules::auth::domain::entities::{AuthSession, UserStatus};
 use crate::modules::auth::domain::errors::AuthError;
+
+use super::support::{
+    fixed_now, sample_user, AuthUseCaseTestContext, FakeTokenHasher, UseCaseTestContext,
+};
 
 fn active_user(name: &str, email: &str) -> crate::modules::auth::domain::entities::User {
     let now = fixed_now();
@@ -463,10 +464,13 @@ async fn login_contract_returns_user_with_access_token_or_mfa_ticket_shape() {
 
     let login = context
         .auth_mfa_use_case()
-        .login(crate::modules::auth::application::dto::LoginCommand {
-            email: "login.contract@example.com".to_string(),
-            password: "correct-password".to_string(),
-        }, crate::modules::auth::application::dto::SessionContext::unknown())
+        .login(
+            crate::modules::auth::application::dto::LoginCommand {
+                email: "login.contract@example.com".to_string(),
+                password: "correct-password".to_string(),
+            },
+            crate::modules::auth::application::dto::SessionContext::unknown(),
+        )
         .await
         .expect("login should succeed");
 
@@ -491,10 +495,13 @@ async fn login_contract_returns_user_with_access_token_or_mfa_ticket_shape() {
 
     let login = context
         .auth_mfa_use_case()
-        .login(crate::modules::auth::application::dto::LoginCommand {
-            email: "mfa.contract@example.com".to_string(),
-            password: "mfa-password".to_string(),
-        }, crate::modules::auth::application::dto::SessionContext::unknown())
+        .login(
+            crate::modules::auth::application::dto::LoginCommand {
+                email: "mfa.contract@example.com".to_string(),
+                password: "mfa-password".to_string(),
+            },
+            crate::modules::auth::application::dto::SessionContext::unknown(),
+        )
         .await
         .expect("mfa login should produce ticket");
 

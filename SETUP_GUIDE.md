@@ -39,6 +39,7 @@ For current service-to-service token validation contract, see [`docs/AUTH_VALIDA
     │       ├── application/   # Use Cases & DTOs
     │       │   ├── dto/
     │       │   └── use_cases/
+    │       │       └── tests/ # Use-case tests + shared test support
     │       ├── domain/        # Entities, Errors, Repository Interfaces
     │       │   ├── entities/
     │       │   ├── errors/
@@ -46,11 +47,14 @@ For current service-to-service token validation contract, see [`docs/AUTH_VALIDA
     │       └── infrastructure/ # Controllers, Repositories & Services
     │           ├── controllers/
     │           ├── repositories/
-    │           └── services/
+    │           ├── services/
+    │           └── tests/     # Contract / integration-style module tests
     │
     └── shared/                 # Cross-cutting Components
         └── domain/            # Result Pattern, etc.
 ```
+
+Keep production code and test code in separate subtrees. In this repository, module-local tests live under `tests/` directories such as `src/modules/auth/application/use_cases/tests/` and `src/modules/auth/infrastructure/tests/`, instead of being mixed into the same folder as implementation files.
 
 ## Step-by-Step Setup
 
@@ -64,7 +68,7 @@ cd <project-name>
 ### Step 2: Create Folder Structure
 
 ```bash
-mkdir -p src/{infrastructure/{config,database,logger,filters},modules/auth/{application/{dto,use_cases},domain/{entities,errors,traits},infrastructure/{controllers,repositories}},shared/domain}
+mkdir -p src/{infrastructure/{config,database,logger,filters},modules/auth/{application/{dto,use_cases/tests},domain/{entities,errors,traits},infrastructure/{controllers,repositories,tests}},shared/domain}
 ```
 
 ### Step 3: Update Cargo.toml
@@ -560,6 +564,9 @@ pub mod login_use_case;
 pub use jwt_service::{JwtConfig, JwtService};
 pub use register_use_case::RegisterUseCase;
 pub use login_use_case::LoginUseCase;
+
+#[cfg(test)]
+pub(crate) mod tests;
 ```
 
 **src/modules/auth/application/mod.rs**
@@ -714,6 +721,9 @@ use crate::modules::auth::infrastructure::controllers::{login, register};
 
 pub mod controllers;
 pub mod repositories;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone)]
 pub struct AppState {
