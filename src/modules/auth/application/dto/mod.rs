@@ -455,3 +455,80 @@ impl From<AuthTokenResult> for AccessTokenResponseDto {
         }
     }
 }
+
+pub enum RegisterCommandError {
+    ConfirmPasswordRequired,
+    PasswordsDoNotMatch,
+    NameRequired,
+    FirstNameRequired,
+}
+
+impl RegisterRequestCommand {
+    pub fn into_use_case_command(self) -> Result<RegisterUserCommand, RegisterCommandError> {
+        let email = self.email.trim().to_string();
+        let password = self.password;
+
+        let first_name = self
+            .first_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string);
+
+        let last_name = self
+            .last_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string);
+
+        if let Some(first_name) = first_name {
+            let confirm_password = self
+                .confirm_password
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .ok_or(RegisterCommandError::ConfirmPasswordRequired)?;
+
+            if confirm_password != password {
+                return Err(RegisterCommandError::PasswordsDoNotMatch);
+            }
+
+            let name = match last_name {
+                Some(last_name) => format!("{first_name} {last_name}"),
+                None => first_name,
+            };
+            return Ok(RegisterUserCommand { name, email, password });
+        }
+
+        let legacy_name = self
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string);
+
+        let legacy_name = match legacy_name {
+            Some(name) => name,
+            None if self.name.is_some() => return Err(RegisterCommandError::NameRequired),
+            None => return Err(RegisterCommandError::FirstNameRequired),
+        };
+
+        if let Some(confirm_password) = self
+            .confirm_password
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            if confirm_password != password {
+                return Err(RegisterCommandError::PasswordsDoNotMatch);
+            }
+        }
+
+        Ok(RegisterUserCommand {
+            name: legacy_name,
+            email,
+            password,
+        })
+    }
+}
