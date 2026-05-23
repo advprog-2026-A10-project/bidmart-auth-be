@@ -49,26 +49,11 @@ pub async fn logout(
     State(state): State<AppState>,
     AuthenticatedUser(auth): AuthenticatedUser,
 ) -> Result<Response, ApiError> {
-    let jti_hash = auth
-        .session_jti_hash
-        .as_deref()
-        .ok_or_else(|| ApiError::from_auth_error(AuthError::SessionInvalid))?;
-    let now = state.clock.now();
-    let session = state
-        .session_repository
-        .find_active_by_jti_hash(jti_hash, now)
-        .await
-        .map_err(ApiError::from_auth_error)?
-        .ok_or_else(|| ApiError::from_auth_error(AuthError::SessionInvalid))?;
-
-    let revoked = state
-        .session_repository
-        .revoke_session(auth.user_id, session.id, None, now)
+    state
+        .session_use_case
+        .logout(auth)
         .await
         .map_err(ApiError::from_auth_error)?;
-    if !revoked {
-        return Err(ApiError::from_auth_error(AuthError::SessionInvalid));
-    }
 
     Ok(with_clear_session_cookie(
         &state,
@@ -82,30 +67,12 @@ pub async fn validate_session(
     State(state): State<AppState>,
     AuthenticatedUser(auth): AuthenticatedUser,
 ) -> Result<Json<ValidateSessionResponseDto>, ApiError> {
-    let jti_hash = auth
-        .session_jti_hash
-        .as_deref()
-        .ok_or_else(|| ApiError::from_auth_error(AuthError::SessionInvalid))?;
-    let session = state
-        .session_repository
-        .find_active_by_jti_hash(jti_hash, state.clock.now())
-        .await
-        .map_err(ApiError::from_auth_error)?
-        .ok_or_else(|| ApiError::from_auth_error(AuthError::SessionInvalid))?;
-    let user = state
-        .auth_mfa_use_case
-        .resolve_authenticated_user(auth.clone())
+    let result = state
+        .session_use_case
+        .get_session_info(&auth)
         .await
         .map_err(ApiError::from_auth_error)?;
-
-    Ok(Json(ValidateSessionResponseDto {
-        user_id: user.id,
-        name: user.name,
-        email: user.email,
-        email_verified: user.email_verified,
-        mfa_satisfied: auth.mfa_satisfied,
-        session_expiry: session.expires_at.to_rfc3339(),
-    }))
+    Ok(Json(result))
 }
 
 pub async fn forgot_password(

@@ -14,12 +14,16 @@ use infrastructure::config::{AppConfig, EmailDeliveryMode};
 use infrastructure::database::create_pool;
 use infrastructure::logger::init_tracer;
 use modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
+use modules::auth::application::use_cases::mfa_setup_use_case::MfaSetupUseCase;
+use modules::auth::application::use_cases::notification_use_case::NotificationUseCase;
 use modules::auth::application::use_cases::password_reset_use_case::{
     ForgotPasswordUseCase, ResetPasswordUseCase,
 };
 use modules::auth::application::use_cases::policy::AuthPolicy;
+use modules::auth::application::use_cases::profile_use_case::ProfileUseCase;
 use modules::auth::application::use_cases::register_user_use_case::RegisterUserUseCase;
 use modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
+use modules::auth::application::use_cases::session_use_case::SessionUseCase;
 use modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
 use modules::auth::infrastructure::create_router_with_cors_origins;
 use modules::auth::infrastructure::repositories::{
@@ -54,7 +58,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let notification_preferences_repository =
         Arc::new(PostgresNotificationPreferencesRepository::new(pool.clone()));
     let totp_setup_repository = Arc::new(PostgresTotpSetupRepository::new(pool));
-    let password_hasher = Arc::new(ScryptPasswordHasher);
+
+    let scrypt = Arc::new(ScryptPasswordHasher);
+    let password_hasher: Arc<dyn modules::auth::domain::traits::PasswordHasher> = scrypt.clone();
+    let password_verifier: Arc<dyn modules::auth::domain::traits::PasswordVerifier> = scrypt;
+
     let token_generator = Arc::new(RandomVerificationTokenGenerator);
     let token_hasher = Arc::new(Sha256VerificationTokenHasher);
     let email_sender = Arc::new(match config.email_delivery_mode {
@@ -140,21 +148,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         auth_policy.clone(),
     ));
     let auth_mfa_use_case = Arc::new(AuthMfaUseCase::new(
-        user_repository,
-        mfa_ticket_repository,
-        email_mfa_code_repository,
+        user_repository.clone(),
+        mfa_ticket_repository.clone(),
+        email_mfa_code_repository.clone(),
         session_repository.clone(),
-        notification_preferences_repository,
+        password_verifier.clone(),
+        token_generator.clone(),
+        token_hasher.clone(),
+        email_sender.clone(),
+        jwt_service.clone(),
+        totp_service.clone(),
+        clock.clone(),
+        auth_policy.clone(),
+    ));
+    let profile_use_case = Arc::new(ProfileUseCase::new(
+        user_repository.clone(),
+        session_repository.clone(),
+        password_hasher,
+        password_verifier.clone(),
+        clock.clone(),
+        auth_policy.clone(),
+    ));
+    let session_use_case = Arc::new(SessionUseCase::new(
+        user_repository.clone(),
+        session_repository.clone(),
+        jwt_service,
+        clock.clone(),
+    ));
+    let mfa_setup_use_case = Arc::new(MfaSetupUseCase::new(
+        user_repository.clone(),
+        email_mfa_code_repository,
         totp_setup_repository,
-        password_hasher.clone(),
-        password_hasher.clone(),
+        password_verifier,
         token_generator,
         token_hasher,
         email_sender,
-        jwt_service.clone(),
         totp_service,
         clock.clone(),
-        auth_policy,
+        auth_policy.clone(),
+    ));
+    let notification_use_case = Arc::new(NotificationUseCase::new(
+        user_repository,
+        notification_preferences_repository,
     ));
 
     let app_state = AppState::new(
@@ -164,9 +199,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         forgot_password_use_case,
         reset_password_use_case,
         auth_mfa_use_case,
-        jwt_service,
-        session_repository,
-        clock,
+        profile_use_case,
+        session_use_case,
+        mfa_setup_use_case,
+        notification_use_case,
         config.auth_session_cookie_name.clone(),
         config.auth_session_cookie_secure,
         config.auth_session_cookie_same_site.clone(),

@@ -1,7 +1,6 @@
 use axum::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use axum::http::StatusCode;
 
 use crate::modules::auth::application::dto::AuthenticatedUserContext;
 use crate::modules::auth::domain::errors::AuthError;
@@ -23,28 +22,10 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .ok_or_else(|| ApiError::from_auth_error(AuthError::Unauthorized))?;
 
         let context = state
-            .jwt_service
-            .verify_access_token(&token, state.clock.now())
-            .map_err(ApiError::from_auth_error)?;
-
-        let jti_hash = context
-            .session_jti_hash
-            .as_deref()
-            .ok_or_else(|| ApiError::from_auth_error(AuthError::SessionInvalid))?;
-
-        let session = state
-            .session_repository
-            .find_active_by_jti_hash(jti_hash, state.clock.now())
+            .session_use_case
+            .authenticate(&token)
             .await
-            .map_err(ApiError::from_auth_error)?
-            .ok_or_else(|| ApiError::from_auth_error(AuthError::SessionInvalid))?;
-
-        if session.user_id != context.user_id || session.mfa_satisfied != context.mfa_satisfied {
-            return Err(ApiError::Message {
-                status: StatusCode::UNAUTHORIZED,
-                message: "Unauthorized.".to_string(),
-            });
-        }
+            .map_err(ApiError::from_auth_error)?;
 
         Ok(Self(context))
     }

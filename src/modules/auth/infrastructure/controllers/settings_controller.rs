@@ -21,7 +21,7 @@ pub async fn get_mfa_settings(
     AuthenticatedUser(auth): AuthenticatedUser,
 ) -> Result<Json<MfaSettingsDto>, ApiError> {
     let result = state
-        .auth_mfa_use_case
+        .mfa_setup_use_case
         .get_mfa_settings(auth)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -33,7 +33,7 @@ pub async fn get_profile(
     AuthenticatedUser(auth): AuthenticatedUser,
 ) -> Result<Json<SettingsProfileResponseDto>, ApiError> {
     let result = state
-        .auth_mfa_use_case
+        .profile_use_case
         .get_profile(auth)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -50,7 +50,7 @@ pub async fn update_profile(
         .validate()
         .map_err(ApiError::from_validation_errors)?;
     let result = state
-        .auth_mfa_use_case
+        .profile_use_case
         .update_profile(auth, command)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -67,7 +67,7 @@ pub async fn change_password(
         .validate()
         .map_err(ApiError::from_validation_errors)?;
     let result = state
-        .auth_mfa_use_case
+        .profile_use_case
         .change_password(auth, command)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -79,7 +79,7 @@ pub async fn get_sessions(
     AuthenticatedUser(auth): AuthenticatedUser,
 ) -> Result<Json<SessionsResponseDto>, ApiError> {
     let result = state
-        .auth_mfa_use_case
+        .session_use_case
         .get_sessions(auth)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -92,7 +92,7 @@ pub async fn revoke_session(
     Path(session_id): Path<Uuid>,
 ) -> Result<Json<MessageResponseDto>, ApiError> {
     let result = state
-        .auth_mfa_use_case
+        .session_use_case
         .revoke_session(auth, session_id)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -104,7 +104,7 @@ pub async fn revoke_all_sessions(
     AuthenticatedUser(auth): AuthenticatedUser,
 ) -> Result<Json<MessageResponseDto>, ApiError> {
     let result = state
-        .auth_mfa_use_case
+        .session_use_case
         .revoke_all_sessions(auth)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -116,7 +116,7 @@ pub async fn get_notification_preferences(
     AuthenticatedUser(auth): AuthenticatedUser,
 ) -> Result<Json<NotificationPreferencesResponseDto>, ApiError> {
     let result = state
-        .auth_mfa_use_case
+        .notification_use_case
         .get_notification_preferences(auth)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -130,7 +130,7 @@ pub async fn update_notification_preferences(
 ) -> Result<Json<MessageResponseDto>, ApiError> {
     let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
     let result = state
-        .auth_mfa_use_case
+        .notification_use_case
         .update_notification_preferences(auth, command)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -147,7 +147,7 @@ pub async fn setup_totp(
         .validate()
         .map_err(ApiError::from_validation_errors)?;
     let result = state
-        .auth_mfa_use_case
+        .mfa_setup_use_case
         .setup_totp(auth, command)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -164,7 +164,7 @@ pub async fn verify_totp_setup(
         .validate()
         .map_err(ApiError::from_validation_errors)?;
     state
-        .auth_mfa_use_case
+        .mfa_setup_use_case
         .verify_totp_setup(auth, command)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -183,7 +183,7 @@ pub async fn setup_email_mfa(
         .validate()
         .map_err(ApiError::from_validation_errors)?;
     state
-        .auth_mfa_use_case
+        .mfa_setup_use_case
         .setup_email_mfa(auth, command)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -202,7 +202,7 @@ pub async fn verify_email_mfa_setup(
         .validate()
         .map_err(ApiError::from_validation_errors)?;
     state
-        .auth_mfa_use_case
+        .mfa_setup_use_case
         .verify_email_mfa_setup(auth, command)
         .await
         .map_err(ApiError::from_auth_error)?;
@@ -221,7 +221,7 @@ pub async fn disable_mfa(
         .validate()
         .map_err(ApiError::from_validation_errors)?;
     state
-        .auth_mfa_use_case
+        .mfa_setup_use_case
         .disable_mfa(auth, command)
         .await
         .map_err(ApiError::from_auth_error)?;

@@ -9,13 +9,16 @@ use tower_http::cors::CorsLayer;
 
 use crate::infrastructure::logger::request_trace_middleware;
 use crate::modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
+use crate::modules::auth::application::use_cases::mfa_setup_use_case::MfaSetupUseCase;
+use crate::modules::auth::application::use_cases::notification_use_case::NotificationUseCase;
 use crate::modules::auth::application::use_cases::password_reset_use_case::{
     ForgotPasswordUseCase, ResetPasswordUseCase,
 };
+use crate::modules::auth::application::use_cases::profile_use_case::ProfileUseCase;
 use crate::modules::auth::application::use_cases::register_user_use_case::RegisterUserUseCase;
 use crate::modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
+use crate::modules::auth::application::use_cases::session_use_case::SessionUseCase;
 use crate::modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
-use crate::modules::auth::domain::traits::{Clock, JwtService, SessionRepository};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -25,9 +28,10 @@ pub struct AppState {
     pub forgot_password_use_case: Arc<ForgotPasswordUseCase>,
     pub reset_password_use_case: Arc<ResetPasswordUseCase>,
     pub auth_mfa_use_case: Arc<AuthMfaUseCase>,
-    pub jwt_service: Arc<dyn JwtService>,
-    pub session_repository: Arc<dyn SessionRepository>,
-    pub clock: Arc<dyn Clock>,
+    pub profile_use_case: Arc<ProfileUseCase>,
+    pub session_use_case: Arc<SessionUseCase>,
+    pub mfa_setup_use_case: Arc<MfaSetupUseCase>,
+    pub notification_use_case: Arc<NotificationUseCase>,
     pub session_cookie_name: String,
     pub session_cookie_secure: bool,
     pub session_cookie_same_site: String,
@@ -43,9 +47,10 @@ impl AppState {
         forgot_password_use_case: Arc<ForgotPasswordUseCase>,
         reset_password_use_case: Arc<ResetPasswordUseCase>,
         auth_mfa_use_case: Arc<AuthMfaUseCase>,
-        jwt_service: Arc<dyn JwtService>,
-        session_repository: Arc<dyn SessionRepository>,
-        clock: Arc<dyn Clock>,
+        profile_use_case: Arc<ProfileUseCase>,
+        session_use_case: Arc<SessionUseCase>,
+        mfa_setup_use_case: Arc<MfaSetupUseCase>,
+        notification_use_case: Arc<NotificationUseCase>,
         session_cookie_name: String,
         session_cookie_secure: bool,
         session_cookie_same_site: String,
@@ -58,9 +63,10 @@ impl AppState {
             forgot_password_use_case,
             reset_password_use_case,
             auth_mfa_use_case,
-            jwt_service,
-            session_repository,
-            clock,
+            profile_use_case,
+            session_use_case,
+            mfa_setup_use_case,
+            notification_use_case,
             session_cookie_name,
             session_cookie_secure,
             session_cookie_same_site,
