@@ -26,7 +26,7 @@ bidmart-auth-be/
 ├── Cargo.toml
 ├── Dockerfile
 ├── .env.example
-├── migrations/                 # SQLx migrations (auto-run on startup)
+├── migrations/                 # SQLx migrations
 ├── docs/
 ├── tests/                      # Crate-level integration tests (workspace tests)
 └── src/
@@ -135,6 +135,7 @@ Buat file `.env`:
 APP_SERVER_HOST=0.0.0.0
 APP_SERVER_PORT=8080
 APP_DATABASE_URL=postgres://postgres:password@localhost:5432/bidmart
+APP_AUTO_MIGRATE_ON_STARTUP=true
 APP_AUTH_JWT_SECRET=replace-with-at-least-32-bytes-of-key-material
 APP_AUTH_ACCESS_TOKEN_TTL_SECONDS=3600
 APP_AUTH_MFA_TICKET_TTL_SECONDS=300
@@ -184,7 +185,41 @@ cargo build
 cargo run
 ```
 
-Migrations dijalankan otomatis pada startup via `sqlx::migrate!().run(&pool)`. Untuk menambah migration baru:
+## Dev Database Utilities
+
+Untuk environment lokal, tersedia script utilitas:
+
+```bash
+./scripts/reset-db.sh
+./scripts/seed-db.sh
+./scripts/reset-and-seed-db.sh
+```
+
+Catatan:
+
+- Semua script membaca `APP_DATABASE_URL` dari environment (`.env`).
+- `reset-db` hanya menghapus data aplikasi (bukan metadata migration `sqlx`).
+- `seed-db` mengisi akun contoh:
+  - `hakimnizami15@gmail.com` (ACTIVE, verified)
+  - `hakimnizami05@gmail.com` (ACTIVE, unverified)
+  - `pending.user@bidmart.dev` (PENDING_VERIFICATION, unverified)
+  - `pending.verified@bidmart.dev` (PENDING_VERIFICATION, verified)
+  - `disabled.user@bidmart.dev` (DISABLED, verified)
+  - `disabled.unverified@bidmart.dev` (DISABLED, unverified)
+  - `active.verified@bidmart.dev` (ACTIVE, verified)
+  - Password semua akun seed: `Password123!`
+
+Migrations dijalankan melalui helper `run_pending_migrations` yang membaca folder `./migrations`.
+
+- `APP_AUTO_MIGRATE_ON_STARTUP=true` (default): pending migrations dijalankan saat startup `cargo run`.
+- `APP_AUTO_MIGRATE_ON_STARTUP=false`: startup tidak menjalankan migrations.
+- Jalankan migration job manual:
+
+```bash
+cargo run --bin migrate
+```
+
+Untuk menambah migration baru:
 
 ```bash
 cargo install sqlx-cli --no-default-features --features postgres

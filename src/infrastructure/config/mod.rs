@@ -14,6 +14,7 @@ pub struct AppConfig {
     pub server_host: String,
     pub server_port: u16,
     pub database_url: String,
+    pub auto_migrate_on_startup: bool,
     pub auth_min_password_length: usize,
     pub auth_verification_token_ttl_seconds: i64,
     pub auth_resend_cooldown_seconds: i64,
@@ -62,6 +63,7 @@ impl AppConfig {
             server_host: required_env("APP_SERVER_HOST")?,
             server_port: parsed_env("APP_SERVER_PORT")?,
             database_url: required_env("APP_DATABASE_URL")?,
+            auto_migrate_on_startup: resolve_auto_migrate_on_startup()?,
             auth_min_password_length: optional_parsed_env("APP_AUTH_MIN_PASSWORD_LENGTH", 8)?,
             auth_verification_token_ttl_seconds: optional_parsed_env(
                 "APP_AUTH_VERIFICATION_TOKEN_TTL_SECONDS",
@@ -119,6 +121,21 @@ impl AppConfig {
             )?,
             auth_session_cookie_same_site: optional_env("APP_AUTH_SESSION_COOKIE_SAME_SITE", "Lax"),
         })
+    }
+}
+
+fn resolve_auto_migrate_on_startup() -> Result<bool, ConfigError> {
+    match std::env::var("APP_AUTO_MIGRATE_ON_STARTUP")
+        .or_else(|_| std::env::var("APP_auto_migrate_on_startup"))
+        .or_else(|_| std::env::var("app_auto_migrate_on_startup"))
+    {
+        Ok(raw) => raw.parse::<bool>().map_err(|_| {
+            ConfigError::Message(
+                "Invalid APP_AUTO_MIGRATE_ON_STARTUP (expected true/false)".to_string(),
+            )
+        }),
+        // Keep default ON for local DX, mirroring core-be.
+        Err(_) => Ok(true),
     }
 }
 

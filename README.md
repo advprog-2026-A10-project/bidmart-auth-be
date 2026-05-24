@@ -87,6 +87,8 @@ Important variables:
 cargo run
 ```
 
+Dengan default `APP_AUTO_MIGRATE_ON_STARTUP=true`, service akan menjalankan pending migrations saat startup.
+
 ## Tests
 
 ```bash
@@ -95,7 +97,16 @@ cargo test
 
 ## Migrations
 
-Migrations are stored in `migrations/` and executed at startup by the service.
+Migrations disimpan di `migrations/`.
+
+- Startup migrate (opsional, dikontrol env):
+  - `APP_AUTO_MIGRATE_ON_STARTUP=true` -> jalankan pending migrations saat `cargo run`
+  - `APP_AUTO_MIGRATE_ON_STARTUP=false` -> skip migrate saat startup
+- Dedicated migration job:
+
+```bash
+cargo run --bin migrate
+```
 
 ## References
 

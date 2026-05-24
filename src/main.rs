@@ -7,11 +7,11 @@ use std::sync::Arc;
 use axum::serve;
 use chrono::Duration;
 use resend_rs::Resend;
-use std::path::Path;
 use tokio::net::TcpListener;
 
 use infrastructure::config::{AppConfig, EmailDeliveryMode};
 use infrastructure::database::create_pool;
+use infrastructure::database::migrations::run_pending_migrations;
 use infrastructure::logger::init_tracer;
 use modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
 use modules::auth::application::use_cases::mfa_setup_use_case::MfaSetupUseCase;
@@ -45,8 +45,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::new()?;
 
     let pool = create_pool(&config.database_url).await?;
-    let migrator = sqlx::migrate::Migrator::new(Path::new("./migrations")).await?;
-    migrator.run(&pool).await?;
+    if config.auto_migrate_on_startup {
+        tracing::info!("APP_AUTO_MIGRATE_ON_STARTUP=true, running pending migrations");
+        run_pending_migrations(&pool).await?;
+    }
 
     let user_repository = Arc::new(PostgresUserRepository::new(pool.clone()));
     let token_repository = Arc::new(PostgresEmailVerificationTokenRepository::new(pool.clone()));
