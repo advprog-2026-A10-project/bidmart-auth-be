@@ -3,6 +3,7 @@ name = "bidmart-auth-be"
 version = "0.1.0"
 edition = "2021"
 description = "BidMart Auth Service - Clean Architecture Axum API"
+default-run = "bidmart-auth-be"
 
 [dependencies]
 axum = { version = "0.7", features = ["macros"] }
