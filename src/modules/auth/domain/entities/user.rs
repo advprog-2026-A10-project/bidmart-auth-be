@@ -24,6 +24,18 @@ impl UserStatus {
             _ => Self::PendingVerification,
         }
     }
+
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, Self::Disabled)
+    }
+
+    pub fn is_pending_verification(&self) -> bool {
+        matches!(self, Self::PendingVerification)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,7 +73,7 @@ impl User {
             postal_code: String::new(),
             email,
             password_hash,
-            status: UserStatus::PendingVerification,
+            status: UserStatus::Active,
             email_verified_at: None,
             mfa_email_enabled: false,
             mfa_totp_enabled: false,
@@ -82,10 +94,6 @@ impl User {
             }
             _ => self.first_name.clone(),
         }
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.status == UserStatus::Active
     }
 
     pub fn has_mfa_enabled(&self) -> bool {

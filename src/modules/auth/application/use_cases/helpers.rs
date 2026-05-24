@@ -6,10 +6,7 @@ use crate::modules::auth::domain::errors::AuthError;
 use crate::modules::auth::domain::traits::UserRepository;
 
 pub(super) fn require_login_allowed(user: &User) -> Result<(), AuthError> {
-    if !user.is_active() {
-        if !user.is_email_verified() {
-            return Err(AuthError::EmailNotVerified);
-        }
+    if !user.status.is_active() {
         return Err(AuthError::UserDisabled);
     }
     if !user.is_email_verified() {

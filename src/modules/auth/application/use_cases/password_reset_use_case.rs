@@ -64,23 +64,26 @@ impl ForgotPasswordUseCase {
         {
             Some(user) => user,
             None => {
-                tracing::debug!(
+                tracing::info!(
                     target: "auth.forgot_password",
                     email = %normalized_email,
-                    "No user found for forgot-password request"
+                    skip_reason = "user_not_found",
+                    "Skipping forgot-password dispatch"
                 );
                 return Ok(forgot_success_result());
             }
         };
 
-        if !user.is_active() || !user.is_email_verified() {
+        if user.status.is_disabled() {
             tracing::info!(
                 target: "auth.forgot_password",
                 user_id = %user.id,
                 email = %normalized_email,
-                is_active = user.is_active(),
+                is_active = user.status.is_active(),
+                is_pending_verification = user.status.is_pending_verification(),
                 is_email_verified = user.is_email_verified(),
-                "Skipping forgot-password email because user is inactive or unverified"
+                skip_reason = "disabled_user",
+                "Skipping forgot-password dispatch"
             );
             return Ok(forgot_success_result());
         }
@@ -98,7 +101,8 @@ impl ForgotPasswordUseCase {
                     target: "auth.forgot_password",
                     user_id = %user.id,
                     email = %normalized_email,
-                    "Skipping forgot-password email because cooldown is still active"
+                    skip_reason = "cooldown_active",
+                    "Skipping forgot-password dispatch"
                 );
                 return Ok(forgot_success_result());
             }
@@ -124,10 +128,16 @@ impl ForgotPasswordUseCase {
             .send_password_reset_email(&user.email, &raw_token)
             .await
         {
+            let cleanup_at = self.clock.now();
+            let cleanup_result = self
+                .token_repository
+                .invalidate_active_tokens_for_user(user.id, cleanup_at)
+                .await;
             tracing::error!(
                 target: "auth.forgot_password",
                 user_id = %user.id,
                 email = %normalized_email,
+                cleanup_token_invalidation_ok = cleanup_result.is_ok(),
                 ?error,
                 "Failed to dispatch forgot-password email; returning generic success"
             );
@@ -211,7 +221,7 @@ impl ResetPasswordUseCase {
             .find_by_id(token.user_id)
             .await?
             .ok_or(AuthError::PasswordResetTokenInvalid)?;
-        if !user.is_active() || !user.is_email_verified() {
+        if user.status.is_disabled() {
             return Err(AuthError::PasswordResetTokenInvalid);
         }
 

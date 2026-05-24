@@ -153,7 +153,10 @@ impl UserRepository for PostgresUserRepository {
             r#"
             UPDATE users
             SET
-                status = 'ACTIVE',
+                status = CASE
+                    WHEN status = 'PENDING_VERIFICATION' THEN 'ACTIVE'::user_status
+                    ELSE status
+                END,
                 email_verified_at = $2,
                 updated_at = $2
             WHERE id = $1

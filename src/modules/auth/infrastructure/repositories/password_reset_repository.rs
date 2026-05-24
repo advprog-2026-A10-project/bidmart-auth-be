@@ -176,7 +176,14 @@ impl PasswordResetCompletionRepository for PostgresPasswordResetTokenRepository 
         let user_rows = sqlx::query(
             r#"
             UPDATE users
-            SET password_hash = $2, updated_at = $3
+            SET
+                password_hash = $2,
+                status = CASE
+                    WHEN status = 'PENDING_VERIFICATION' THEN 'ACTIVE'::user_status
+                    ELSE status
+                END,
+                email_verified_at = COALESCE(email_verified_at, $3),
+                updated_at = $3
             WHERE id = $1
             "#,
         )
