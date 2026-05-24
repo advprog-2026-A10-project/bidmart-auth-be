@@ -44,15 +44,20 @@ impl SessionUseCase {
             .as_deref()
             .ok_or(AuthError::SessionInvalid)?;
 
+        let now = self.clock.now();
         let session = self
             .session_repository
-            .find_active_by_jti_hash(jti_hash, self.clock.now())
+            .find_active_by_jti_hash(jti_hash, now)
             .await?
             .ok_or(AuthError::SessionInvalid)?;
 
         if session.user_id != context.user_id || session.mfa_satisfied != context.mfa_satisfied {
             return Err(AuthError::Unauthorized);
         }
+
+        self.session_repository
+            .touch_last_active(jti_hash, now)
+            .await?;
 
         Ok(context)
     }

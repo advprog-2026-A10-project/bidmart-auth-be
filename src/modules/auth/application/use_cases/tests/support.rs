@@ -1163,6 +1163,20 @@ impl SessionRepository for FakeSessionRepository {
             .cloned())
     }
 
+    async fn touch_last_active(
+        &self,
+        jti_hash: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(), AuthError> {
+        let mut state = self.state.lock().expect("state lock poisoned");
+        if let Some(session) = state.sessions_by_hash.get_mut(jti_hash) {
+            if session.expires_at > now {
+                session.last_active_at = now;
+            }
+        }
+        Ok(())
+    }
+
     async fn list_active_by_user_id(
         &self,
         user_id: Uuid,

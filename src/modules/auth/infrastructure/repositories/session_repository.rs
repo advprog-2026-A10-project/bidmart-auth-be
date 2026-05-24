@@ -89,6 +89,26 @@ impl SessionRepository for PostgresSessionRepository {
         Ok(row.map(Self::row_to_session))
     }
 
+    async fn touch_last_active(
+        &self,
+        jti_hash: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(), AuthError> {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET last_active_at = $2
+            WHERE jti_hash = $1 AND expired_at > $2
+            "#,
+        )
+        .bind(jti_hash)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_database_error)?;
+        Ok(())
+    }
+
     async fn list_active_by_user_id(
         &self,
         user_id: Uuid,

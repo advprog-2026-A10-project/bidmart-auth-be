@@ -170,6 +170,8 @@ pub trait SessionRepository: Send + Sync {
         jti_hash: &str,
         now: DateTime<Utc>,
     ) -> Result<Option<AuthSession>, AuthError>;
+    async fn touch_last_active(&self, jti_hash: &str, now: DateTime<Utc>)
+        -> Result<(), AuthError>;
     async fn list_active_by_user_id(
         &self,
         user_id: Uuid,
