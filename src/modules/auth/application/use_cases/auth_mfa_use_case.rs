@@ -229,6 +229,20 @@ impl AuthMfaUseCase {
         self.issue_access_token(&user, true, session).await
     }
 
+    pub async fn issue_post_verification_session(
+        &self,
+        user_id: Uuid,
+        session: SessionContext,
+    ) -> Result<AuthTokenResult, AuthError> {
+        let user = self
+            .user_repository
+            .find_by_id(user_id)
+            .await?
+            .ok_or(AuthError::UserNotFound)?;
+        require_login_allowed(&user)?;
+        self.issue_access_token(&user, true, session).await
+    }
+
     async fn valid_mfa_ticket(&self, raw_ticket: &str) -> Result<MfaTicket, AuthError> {
         let ticket_hash = self.token_hasher.hash(raw_ticket)?;
         let ticket = self

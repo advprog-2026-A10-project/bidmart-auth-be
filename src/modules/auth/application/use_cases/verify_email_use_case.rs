@@ -75,6 +75,7 @@ impl VerifyEmailUseCase {
             .await?;
 
         Ok(VerifyEmailResult {
+            user_id: user.id,
             message: VERIFY_EMAIL_SUCCESS_MESSAGE.to_string(),
         })
     }

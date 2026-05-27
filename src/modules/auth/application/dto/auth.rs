@@ -50,6 +50,7 @@ pub struct VerifyEmailCommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyEmailResult {
+    pub user_id: Uuid,
     pub message: String,
 }
 

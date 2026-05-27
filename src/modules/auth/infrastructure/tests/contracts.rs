@@ -256,7 +256,7 @@ async fn post_register_canonical_payload_requires_confirm_password() {
 }
 
 #[tokio::test]
-async fn post_verify_email_success_returns_message_payload() {
+async fn post_verify_email_success_returns_session_payload_and_cookie() {
     let now = fixed_now();
     let context = UseCaseTestContext::new(now);
     let user = sample_user("Verify Me", "verify.me@example.com", now);
@@ -284,8 +284,17 @@ async fn post_verify_email_success_returns_message_payload() {
         .expect("response");
 
     assert_eq!(response.status(), StatusCode::OK);
+    let set_cookie = response
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert!(set_cookie.contains("auth_session="));
+
     let body = response_json(response).await;
-    assert_eq!(body, json!({ "message": "Email verified." }));
+    assert_eq!(body["user"]["id"], user.id.to_string());
+    assert_eq!(body["user"]["email"], user.email);
+    assert!(body["accessToken"].is_string());
 }
 
 #[tokio::test]

@@ -1,16 +1,19 @@
 use axum::extract::rejection::JsonRejection;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use axum::response::Response;
 use axum::Json;
 use validator::Validate;
 
 use crate::modules::auth::application::dto::{
-    MessageResponseDto, RegisterRequestCommand, RegisterResponseDto, ResendVerificationCommand,
-    VerifyEmailCommand,
+    AccessTokenResponseDto, MessageResponseDto, RegisterRequestCommand, RegisterResponseDto,
+    ResendVerificationCommand, VerifyEmailCommand,
 };
 use crate::modules::auth::infrastructure::AppState;
 
 use super::api_error::ApiError;
+use super::helpers::{extract_session_context, with_session_cookie};
 
 pub async fn register(
     State(state): State<AppState>,
@@ -35,8 +38,9 @@ pub async fn register(
 
 pub async fn verify_email(
     State(state): State<AppState>,
+    headers: HeaderMap,
     payload: Result<Json<VerifyEmailCommand>, JsonRejection>,
-) -> Result<Json<MessageResponseDto>, ApiError> {
+) -> Result<Response, ApiError> {
     let Json(command) = payload.map_err(ApiError::from_json_rejection)?;
     command
         .validate()
@@ -48,7 +52,15 @@ pub async fn verify_email(
         .await
         .map_err(ApiError::from_auth_error)?;
 
-    Ok(Json(result.into()))
+    let issued = state
+        .auth_mfa_use_case
+        .issue_post_verification_session(result.user_id, extract_session_context(&headers))
+        .await
+        .map_err(ApiError::from_auth_error)?;
+
+    let response = AccessTokenResponseDto::from(issued);
+    let access_token = response.access_token.clone();
+    Ok(with_session_cookie(&state, &access_token, Json(response)))
 }
 
 pub async fn resend_verification(
