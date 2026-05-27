@@ -72,7 +72,11 @@ impl MfaTicketRepository for PostgresMfaTicketRepository {
         Ok(row.map(Self::row_to_ticket))
     }
 
-    async fn consume(&self, ticket_id: Uuid, consumed_at: DateTime<Utc>) -> Result<bool, AuthError> {
+    async fn consume(
+        &self,
+        ticket_id: Uuid,
+        consumed_at: DateTime<Utc>,
+    ) -> Result<bool, AuthError> {
         let rows_affected = sqlx::query(
             r#"
             UPDATE mfa_tickets

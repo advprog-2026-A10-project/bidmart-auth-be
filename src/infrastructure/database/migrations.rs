@@ -6,4 +6,3 @@ pub async fn run_pending_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::
     let migrator = Migrator::new(Path::new("./migrations")).await?;
     migrator.run(pool).await
 }
-

@@ -11,7 +11,6 @@ use crate::modules::auth::infrastructure::AppState;
 pub use crate::modules::auth::infrastructure::services::extract_session_context;
 
 pub fn with_session_cookie(
-
     state: &AppState,
     access_token: &str,
     payload: Json<impl Serialize>,
@@ -42,4 +41,3 @@ pub fn with_clear_session_cookie(state: &AppState, payload: Json<impl Serialize>
     }
     response
 }
-

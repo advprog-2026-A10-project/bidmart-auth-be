@@ -113,7 +113,11 @@ impl RegisterRequestCommand {
                 Some(last_name) => format!("{first_name} {last_name}"),
                 None => first_name,
             };
-            return Ok(RegisterUserCommand { name, email, password });
+            return Ok(RegisterUserCommand {
+                name,
+                email,
+                password,
+            });
         }
 
         let legacy_name = self

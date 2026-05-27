@@ -1,3 +1,4 @@
+pub mod authorization_repository;
 pub mod email_verification_repository;
 pub mod mfa_repository;
 pub mod notification_repository;
@@ -5,6 +6,7 @@ pub mod password_reset_repository;
 pub mod session_repository;
 pub mod user_repository;
 
+pub use authorization_repository::PostgresAuthorizationRepository;
 pub use email_verification_repository::PostgresEmailVerificationTokenRepository;
 pub use mfa_repository::{
     PostgresEmailMfaCodeRepository, PostgresMfaTicketRepository, PostgresTotpSetupRepository,

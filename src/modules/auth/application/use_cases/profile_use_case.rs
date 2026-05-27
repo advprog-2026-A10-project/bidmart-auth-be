@@ -93,11 +93,7 @@ impl ProfileUseCase {
             .update_password_hash(user.id, password_hash, self.clock.now())
             .await?;
         self.session_repository
-            .revoke_all_other_sessions(
-                user.id,
-                auth.session_jti_hash.as_deref(),
-                self.clock.now(),
-            )
+            .revoke_all_other_sessions(user.id, auth.session_jti_hash.as_deref(), self.clock.now())
             .await?;
         Ok(MessageResponseDto {
             message: "Password changed.".to_string(),

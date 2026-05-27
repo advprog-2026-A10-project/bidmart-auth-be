@@ -11,16 +11,14 @@ mod session;
 
 pub use auth::{
     RegisterCommandError, RegisterRequestCommand, RegisterResponseDto, RegisterUserCommand,
-    RegisterUserResult, ResendVerificationCommand, ResendVerificationResult,
-    VerifyEmailCommand, VerifyEmailResult, RESEND_VERIFICATION_MESSAGE,
-    VERIFY_EMAIL_SUCCESS_MESSAGE,
+    RegisterUserResult, ResendVerificationCommand, ResendVerificationResult, VerifyEmailCommand,
+    VerifyEmailResult, RESEND_VERIFICATION_MESSAGE, VERIFY_EMAIL_SUCCESS_MESSAGE,
 };
 pub use common::MessageResponseDto;
 pub use login::{
-    AccessTokenResponseDto, AuthTokenResult, AuthenticatedLoginResult, LoginCommand,
-    LoginOutcome, LoginResponseDto, SendEmailMfaCommand, SessionContext,
-    ValidateSessionResponseDto, VerifyEmailMfaCommand, VerifyTotpMfaCommand,
-    LOGOUT_SUCCESS_MESSAGE,
+    AccessTokenResponseDto, AuthTokenResult, AuthenticatedLoginResult, LoginCommand, LoginOutcome,
+    LoginResponseDto, SendEmailMfaCommand, SessionContext, ValidateSessionResponseDto,
+    VerifyEmailMfaCommand, VerifyTotpMfaCommand, LOGOUT_SUCCESS_MESSAGE,
 };
 pub use mfa_setup::{
     DisableMfaCommand, MfaSettingsDto, SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult,

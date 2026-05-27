@@ -21,8 +21,7 @@ struct SeedUser<'a> {
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
 
-    let database_url =
-        std::env::var("APP_DATABASE_URL").context("APP_DATABASE_URL is not set")?;
+    let database_url = std::env::var("APP_DATABASE_URL").context("APP_DATABASE_URL is not set")?;
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(&database_url)

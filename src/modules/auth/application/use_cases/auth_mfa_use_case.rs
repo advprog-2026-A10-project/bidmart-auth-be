@@ -4,8 +4,8 @@ use uuid::Uuid;
 use validator::ValidateEmail;
 
 use crate::modules::auth::application::dto::{
-    AuthTokenResult, AuthenticatedLoginResult, LoginCommand, LoginOutcome,
-    SendEmailMfaCommand, SessionContext, VerifyEmailMfaCommand, VerifyTotpMfaCommand,
+    AuthTokenResult, AuthenticatedLoginResult, LoginCommand, LoginOutcome, SendEmailMfaCommand,
+    SessionContext, VerifyEmailMfaCommand, VerifyTotpMfaCommand,
 };
 use crate::modules::auth::application::use_cases::helpers::require_login_allowed;
 use crate::modules::auth::application::use_cases::policy::AuthPolicy;

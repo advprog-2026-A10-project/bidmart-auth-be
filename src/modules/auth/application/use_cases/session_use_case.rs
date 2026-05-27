@@ -8,10 +8,13 @@ use crate::modules::auth::application::dto::{
 };
 use crate::modules::auth::application::use_cases::helpers::require_settings_user;
 use crate::modules::auth::domain::errors::AuthError;
-use crate::modules::auth::domain::traits::{Clock, JwtService, SessionRepository, UserRepository};
+use crate::modules::auth::domain::traits::{
+    AuthorizationRepository, Clock, JwtService, SessionRepository, UserRepository,
+};
 
 pub struct SessionUseCase {
     user_repository: Arc<dyn UserRepository>,
+    authorization_repository: Arc<dyn AuthorizationRepository>,
     session_repository: Arc<dyn SessionRepository>,
     jwt_service: Arc<dyn JwtService>,
     clock: Arc<dyn Clock>,
@@ -20,12 +23,14 @@ pub struct SessionUseCase {
 impl SessionUseCase {
     pub fn new(
         user_repository: Arc<dyn UserRepository>,
+        authorization_repository: Arc<dyn AuthorizationRepository>,
         session_repository: Arc<dyn SessionRepository>,
         jwt_service: Arc<dyn JwtService>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             user_repository,
+            authorization_repository,
             session_repository,
             jwt_service,
             clock,
@@ -103,6 +108,10 @@ impl SessionUseCase {
             .ok_or(AuthError::Unauthorized)?;
         let name = user.display_name();
         let email_verified = user.is_email_verified();
+        let authorization = self
+            .authorization_repository
+            .get_user_authorization(user.id)
+            .await?;
         Ok(ValidateSessionResponseDto {
             user_id: user.id,
             name,
@@ -110,6 +119,8 @@ impl SessionUseCase {
             email_verified,
             mfa_satisfied: auth.mfa_satisfied,
             session_expiry: session.expires_at.to_rfc3339(),
+            roles: authorization.roles,
+            permissions: authorization.permissions,
         })
     }
 
@@ -167,11 +178,7 @@ impl SessionUseCase {
     ) -> Result<MessageResponseDto, AuthError> {
         let user = require_settings_user(&self.user_repository, &auth).await?;
         self.session_repository
-            .revoke_all_other_sessions(
-                user.id,
-                auth.session_jti_hash.as_deref(),
-                self.clock.now(),
-            )
+            .revoke_all_other_sessions(user.id, auth.session_jti_hash.as_deref(), self.clock.now())
             .await?;
         Ok(MessageResponseDto {
             message: "Sessions revoked.".to_string(),

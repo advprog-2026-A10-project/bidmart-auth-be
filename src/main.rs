@@ -9,6 +9,7 @@ use chrono::Duration;
 use resend_rs::Resend;
 use tokio::net::TcpListener;
 
+use infrastructure::amqp::AmqpPublisher;
 use infrastructure::config::{AppConfig, EmailDeliveryMode};
 use infrastructure::database::create_pool;
 use infrastructure::database::migrations::run_pending_migrations;
@@ -27,10 +28,10 @@ use modules::auth::application::use_cases::session_use_case::SessionUseCase;
 use modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
 use modules::auth::infrastructure::create_router_with_cors_origins;
 use modules::auth::infrastructure::repositories::{
-    PostgresEmailMfaCodeRepository, PostgresEmailVerificationTokenRepository,
-    PostgresMfaTicketRepository, PostgresNotificationPreferencesRepository,
-    PostgresPasswordResetTokenRepository, PostgresSessionRepository, PostgresTotpSetupRepository,
-    PostgresUserRepository,
+    PostgresAuthorizationRepository, PostgresEmailMfaCodeRepository,
+    PostgresEmailVerificationTokenRepository, PostgresMfaTicketRepository,
+    PostgresNotificationPreferencesRepository, PostgresPasswordResetTokenRepository,
+    PostgresSessionRepository, PostgresTotpSetupRepository, PostgresUserRepository,
 };
 use modules::auth::infrastructure::services::{
     Hs256JwtService, RandomVerificationTokenGenerator, ResendVerificationEmailSender,
@@ -44,6 +45,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = AppConfig::new()?;
 
+    let amqp = match &config.amqp_url {
+        Some(url) => match AmqpPublisher::connect(url, &config.amqp_exchange).await {
+            Ok(publisher) => Some(publisher),
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "failed to initialize AMQP publisher; continuing without events"
+                );
+                None
+            }
+        },
+        None => None,
+    };
+
     let pool = create_pool(&config.database_url).await?;
     if config.auto_migrate_on_startup {
         tracing::info!("APP_AUTO_MIGRATE_ON_STARTUP=true, running pending migrations");
@@ -51,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let user_repository = Arc::new(PostgresUserRepository::new(pool.clone()));
+    let authorization_repository = Arc::new(PostgresAuthorizationRepository::new(pool.clone()));
     let token_repository = Arc::new(PostgresEmailVerificationTokenRepository::new(pool.clone()));
     let password_reset_token_repository =
         Arc::new(PostgresPasswordResetTokenRepository::new(pool.clone()));
@@ -173,6 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let session_use_case = Arc::new(SessionUseCase::new(
         user_repository.clone(),
+        authorization_repository.clone(),
         session_repository.clone(),
         jwt_service,
         clock.clone(),
@@ -203,12 +220,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         auth_mfa_use_case,
         profile_use_case,
         session_use_case,
+        authorization_repository,
         mfa_setup_use_case,
         notification_use_case,
         config.auth_session_cookie_name.clone(),
         config.auth_session_cookie_secure,
         config.auth_session_cookie_same_site.clone(),
         config.auth_access_token_ttl_seconds,
+        amqp,
+        config.internal_service_token.clone(),
     );
 
     let router = create_router_with_cors_origins(app_state, &config.cors_allowed_origins);

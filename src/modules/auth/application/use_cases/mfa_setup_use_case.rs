@@ -3,9 +3,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::modules::auth::application::dto::{
-    AuthenticatedUserContext, DisableMfaCommand, MfaSettingsDto,
-    SetupEmailMfaCommand, SetupTotpCommand, SetupTotpResult, VerifyEmailMfaSetupCommand,
-    VerifyTotpSetupCommand,
+    AuthenticatedUserContext, DisableMfaCommand, MfaSettingsDto, SetupEmailMfaCommand,
+    SetupTotpCommand, SetupTotpResult, VerifyEmailMfaSetupCommand, VerifyTotpSetupCommand,
 };
 use crate::modules::auth::application::use_cases::helpers::require_settings_user;
 use crate::modules::auth::application::use_cases::policy::AuthPolicy;

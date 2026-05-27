@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::modules::auth::domain::entities::{
     AuthSession, AuthenticatedUserContext, EmailMfaCode, EmailMfaCodePurpose,
     EmailVerificationToken, IssuedAccessToken, MfaTicket, NotificationPreferences,
-    PasswordResetToken, TotpSetup, User,
+    PasswordResetToken, TotpSetup, User, UserAuthorization,
 };
 use crate::modules::auth::domain::errors::AuthError;
 
@@ -170,8 +170,7 @@ pub trait SessionRepository: Send + Sync {
         jti_hash: &str,
         now: DateTime<Utc>,
     ) -> Result<Option<AuthSession>, AuthError>;
-    async fn touch_last_active(&self, jti_hash: &str, now: DateTime<Utc>)
-        -> Result<(), AuthError>;
+    async fn touch_last_active(&self, jti_hash: &str, now: DateTime<Utc>) -> Result<(), AuthError>;
     async fn list_active_by_user_id(
         &self,
         user_id: Uuid,
@@ -200,6 +199,27 @@ pub trait NotificationPreferencesRepository: Send + Sync {
         user_id: Uuid,
         preferences: NotificationPreferences,
     ) -> Result<(), AuthError>;
+}
+
+#[async_trait]
+pub trait AuthorizationRepository: Send + Sync {
+    async fn get_user_authorization(&self, user_id: Uuid) -> Result<UserAuthorization, AuthError>;
+    async fn assign_role_to_user(&self, user_id: Uuid, role_name: &str) -> Result<bool, AuthError>;
+    async fn revoke_role_from_user(
+        &self,
+        user_id: Uuid,
+        role_name: &str,
+    ) -> Result<bool, AuthError>;
+    async fn assign_permission_to_role(
+        &self,
+        role_name: &str,
+        permission_slug: &str,
+    ) -> Result<bool, AuthError>;
+    async fn revoke_permission_from_role(
+        &self,
+        role_name: &str,
+        permission_slug: &str,
+    ) -> Result<bool, AuthError>;
 }
 
 #[async_trait]

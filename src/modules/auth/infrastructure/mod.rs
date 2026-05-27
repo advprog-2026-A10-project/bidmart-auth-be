@@ -7,6 +7,7 @@ use axum::Router;
 use serde_json::json;
 use tower_http::cors::CorsLayer;
 
+use crate::infrastructure::amqp::AmqpPublisher;
 use crate::infrastructure::logger::request_trace_middleware;
 use crate::modules::auth::application::use_cases::auth_mfa_use_case::AuthMfaUseCase;
 use crate::modules::auth::application::use_cases::mfa_setup_use_case::MfaSetupUseCase;
@@ -19,6 +20,7 @@ use crate::modules::auth::application::use_cases::register_user_use_case::Regist
 use crate::modules::auth::application::use_cases::resend_verification_use_case::ResendVerificationUseCase;
 use crate::modules::auth::application::use_cases::session_use_case::SessionUseCase;
 use crate::modules::auth::application::use_cases::verify_email_use_case::VerifyEmailUseCase;
+use crate::modules::auth::domain::traits::AuthorizationRepository;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -30,12 +32,15 @@ pub struct AppState {
     pub auth_mfa_use_case: Arc<AuthMfaUseCase>,
     pub profile_use_case: Arc<ProfileUseCase>,
     pub session_use_case: Arc<SessionUseCase>,
+    pub authorization_repository: Arc<dyn AuthorizationRepository>,
     pub mfa_setup_use_case: Arc<MfaSetupUseCase>,
     pub notification_use_case: Arc<NotificationUseCase>,
     pub session_cookie_name: String,
     pub session_cookie_secure: bool,
     pub session_cookie_same_site: String,
     pub session_cookie_max_age_seconds: i64,
+    pub amqp: Option<AmqpPublisher>,
+    pub internal_service_token: Option<String>,
 }
 
 impl AppState {
@@ -49,12 +54,15 @@ impl AppState {
         auth_mfa_use_case: Arc<AuthMfaUseCase>,
         profile_use_case: Arc<ProfileUseCase>,
         session_use_case: Arc<SessionUseCase>,
+        authorization_repository: Arc<dyn AuthorizationRepository>,
         mfa_setup_use_case: Arc<MfaSetupUseCase>,
         notification_use_case: Arc<NotificationUseCase>,
         session_cookie_name: String,
         session_cookie_secure: bool,
         session_cookie_same_site: String,
         session_cookie_max_age_seconds: i64,
+        amqp: Option<AmqpPublisher>,
+        internal_service_token: Option<String>,
     ) -> Self {
         Self {
             register_use_case,
@@ -65,12 +73,15 @@ impl AppState {
             auth_mfa_use_case,
             profile_use_case,
             session_use_case,
+            authorization_repository,
             mfa_setup_use_case,
             notification_use_case,
             session_cookie_name,
             session_cookie_secure,
             session_cookie_same_site,
             session_cookie_max_age_seconds,
+            amqp,
+            internal_service_token,
         }
     }
 }
@@ -152,6 +163,26 @@ pub fn create_router_with_cors_origins(state: AppState, allowed_origins: &[Strin
         .route(
             "/auth/validate",
             post(controllers::validate_session).options(cors_preflight),
+        )
+        .route(
+            "/auth/me",
+            get(controllers::validate_session).options(cors_preflight),
+        )
+        .route(
+            "/internal/users/{user_id}/roles/assign",
+            post(controllers::assign_user_role).options(cors_preflight),
+        )
+        .route(
+            "/internal/users/{user_id}/roles/revoke",
+            post(controllers::revoke_user_role).options(cors_preflight),
+        )
+        .route(
+            "/internal/roles/{role_name}/permissions/assign",
+            post(controllers::assign_role_permission).options(cors_preflight),
+        )
+        .route(
+            "/internal/roles/{role_name}/permissions/revoke",
+            post(controllers::revoke_role_permission).options(cors_preflight),
         )
         .route(
             "/auth/mfa/send-email",

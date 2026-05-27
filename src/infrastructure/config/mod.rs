@@ -35,6 +35,9 @@ pub struct AppConfig {
     pub auth_session_cookie_name: String,
     pub auth_session_cookie_secure: bool,
     pub auth_session_cookie_same_site: String,
+    pub amqp_url: Option<String>,
+    pub amqp_exchange: String,
+    pub internal_service_token: Option<String>,
 }
 
 impl AppConfig {
@@ -120,6 +123,15 @@ impl AppConfig {
                 false,
             )?,
             auth_session_cookie_same_site: optional_env("APP_AUTH_SESSION_COOKIE_SAME_SITE", "Lax"),
+            amqp_url: std::env::var("APP_AMQP_URL")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            amqp_exchange: optional_env("APP_AMQP_EXCHANGE", "bidmart.domain.events"),
+            internal_service_token: std::env::var("APP_INTERNAL_SERVICE_TOKEN")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
         })
     }
 }

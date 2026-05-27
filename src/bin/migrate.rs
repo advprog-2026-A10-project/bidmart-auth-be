@@ -13,4 +13,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Auth database migrations applied successfully");
     Ok(())
 }
-

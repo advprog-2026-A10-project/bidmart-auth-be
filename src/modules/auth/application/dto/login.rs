@@ -123,6 +123,8 @@ pub struct ValidateSessionResponseDto {
     pub email_verified: bool,
     pub mfa_satisfied: bool,
     pub session_expiry: String,
+    pub roles: Vec<String>,
+    pub permissions: Vec<String>,
 }
 
 impl From<LoginOutcome> for LoginResponseDto {
