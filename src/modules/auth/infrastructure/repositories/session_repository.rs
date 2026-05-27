@@ -41,6 +41,82 @@ impl PostgresSessionRepository {
 #[async_trait]
 impl SessionRepository for PostgresSessionRepository {
     async fn save(&self, session: AuthSession) -> Result<(), AuthError> {
+        let now = session.created_at;
+        let mut tx = self.pool.begin().await.map_err(map_database_error)?;
+
+        // Serialize concurrent login attempts per user so session limit checks stay consistent.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0));")
+            .bind(session.user_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(map_database_error)?;
+
+        let policy = sqlx::query_as::<_, (i32, String)>(
+            r#"
+            SELECT
+                max_concurrent_sessions,
+                enforcement_mode
+            FROM admin_security_policy
+            WHERE id = 1
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        let (max_concurrent_sessions, enforcement_mode) =
+            policy.unwrap_or((3, "REVOKE_OLDEST".to_string()));
+
+        let active_session_ids = sqlx::query_as::<_, (Uuid,)>(
+            r#"
+            SELECT id
+            FROM sessions
+            WHERE user_id = $1
+              AND expired_at > $2
+            ORDER BY created_at ASC
+            FOR UPDATE
+            "#,
+        )
+        .bind(session.user_id)
+        .bind(now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+
+        if (active_session_ids.len() as i32) >= max_concurrent_sessions {
+            let mode = enforcement_mode.to_ascii_uppercase();
+            if mode == "REJECT_NEW" {
+                tx.rollback().await.ok();
+                return Err(AuthError::ConcurrentSessionLimitReached);
+            }
+
+            let revoke_count =
+                (active_session_ids.len() as i32 - max_concurrent_sessions + 1) as usize;
+            let ids_to_revoke: Vec<Uuid> = active_session_ids
+                .into_iter()
+                .take(revoke_count)
+                .map(|(id,)| id)
+                .collect();
+
+            if !ids_to_revoke.is_empty() {
+                sqlx::query(
+                    r#"
+                    UPDATE sessions
+                    SET expired_at = $3
+                    WHERE user_id = $1
+                      AND id = ANY($2::uuid[])
+                      AND expired_at > $3
+                    "#,
+                )
+                .bind(session.user_id)
+                .bind(&ids_to_revoke)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_database_error)?;
+            }
+        }
+
         sqlx::query(
             r#"
             INSERT INTO sessions (
@@ -61,9 +137,11 @@ impl SessionRepository for PostgresSessionRepository {
         .bind(session.expires_at)
         .bind(session.created_at)
         .bind(session.last_active_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_database_error)?;
+
+        tx.commit().await.map_err(map_database_error)?;
         Ok(())
     }
 

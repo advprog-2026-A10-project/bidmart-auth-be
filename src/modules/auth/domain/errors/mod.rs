@@ -60,6 +60,8 @@ pub enum AuthError {
     SessionInvalid,
     #[error("session not found")]
     SessionNotFound,
+    #[error("concurrent session limit reached")]
+    ConcurrentSessionLimitReached,
     #[error("dependency failure: {0}")]
     DependencyFailure(String),
 }

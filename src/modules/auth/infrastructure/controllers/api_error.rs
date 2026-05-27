@@ -191,6 +191,12 @@ impl ApiError {
                 status: StatusCode::NOT_FOUND,
                 message: "Session not found.".to_string(),
             },
+            AuthError::ConcurrentSessionLimitReached => Self::Message {
+                status: StatusCode::FORBIDDEN,
+                message:
+                    "Maximum concurrent sessions reached. Please sign out from another device."
+                        .to_string(),
+            },
             AuthError::Forbidden => Self::Message {
                 status: StatusCode::FORBIDDEN,
                 message: "Forbidden.".to_string(),
