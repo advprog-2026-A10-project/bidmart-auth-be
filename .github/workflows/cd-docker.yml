@@ -25,13 +25,13 @@ jobs:
       CONTAINER_PORT: 8080
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -39,7 +39,7 @@ jobs:
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
@@ -47,7 +47,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build image (local for scan)
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        uses: docker/build-push-action@v6
         with:
           context: .
           load: true
@@ -63,7 +63,7 @@ jobs:
           exit-code: "1"
 
       - name: Build and push image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
@@ -85,8 +85,12 @@ jobs:
       APP_SERVER_HOST: ${{ secrets.APP_SERVER_HOST }}
       APP_SERVER_PORT: ${{ secrets.APP_SERVER_PORT }}
       APP_DATABASE_URL: ${{ secrets.APP_DATABASE_URL }}
-      APP_JWT_SECRET: ${{ secrets.APP_JWT_SECRET }}
-      APP_JWT_EXPIRATION_HOURS: ${{ secrets.APP_JWT_EXPIRATION_HOURS }}
+      APP_AUTH_JWT_SECRET: ${{ secrets.APP_AUTH_JWT_SECRET }}
+      APP_RESEND_API_KEY: ${{ secrets.APP_RESEND_API_KEY }}
+      APP_RESEND_FROM_EMAIL: ${{ secrets.APP_RESEND_FROM_EMAIL }}
+      APP_VERIFY_EMAIL_URL_BASE: ${{ secrets.APP_VERIFY_EMAIL_URL_BASE }}
+      APP_PASSWORD_RESET_URL_BASE: ${{ secrets.APP_PASSWORD_RESET_URL_BASE }}
+      APP_CORS_ALLOWED_ORIGINS: ${{ secrets.APP_CORS_ALLOWED_ORIGINS }}
     steps:
       - name: Check deploy prerequisites
         id: deploy_gate
@@ -94,7 +98,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -n "${EC2_HOST:-}" && -n "${EC2_USER:-}" && -n "${EC2_SSH_KEY:-}" && -n "${APP_DATABASE_URL:-}" && -n "${APP_JWT_SECRET:-}" ]]; then
+          if [[ -n "${EC2_HOST:-}" \
+            && -n "${EC2_USER:-}" \
+            && -n "${EC2_SSH_KEY:-}" \
+            && -n "${APP_DATABASE_URL:-}" \
+            && -n "${APP_AUTH_JWT_SECRET:-}" \
+            && -n "${APP_RESEND_API_KEY:-}" \
+            && -n "${APP_RESEND_FROM_EMAIL:-}" \
+            && -n "${APP_VERIFY_EMAIL_URL_BASE:-}" \
+            && -n "${APP_PASSWORD_RESET_URL_BASE:-}" \
+            && -n "${APP_CORS_ALLOWED_ORIGINS:-}" ]]; then
             echo "should_deploy=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -104,17 +117,16 @@ jobs:
 
       - name: Deploy on EC2 via SSH
         if: steps.deploy_gate.outputs.should_deploy == 'true'
-        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ env.EC2_HOST }}
           username: ${{ env.EC2_USER }}
           key: ${{ env.EC2_SSH_KEY }}
-          envs: IMAGE,CONTAINER_NAME,HOST_PORT,CONTAINER_PORT,APP_SERVER_HOST,APP_SERVER_PORT,APP_DATABASE_URL,APP_JWT_SECRET,APP_JWT_EXPIRATION_HOURS
+          envs: IMAGE,CONTAINER_NAME,HOST_PORT,CONTAINER_PORT,APP_SERVER_HOST,APP_SERVER_PORT,APP_DATABASE_URL,APP_AUTH_JWT_SECRET,APP_RESEND_API_KEY,APP_RESEND_FROM_EMAIL,APP_VERIFY_EMAIL_URL_BASE,APP_PASSWORD_RESET_URL_BASE,APP_CORS_ALLOWED_ORIGINS
           script: |
             set -euo pipefail
             server_host="${APP_SERVER_HOST:-0.0.0.0}"
             server_port="${APP_SERVER_PORT:-$CONTAINER_PORT}"
-            jwt_expiration_hours="${APP_JWT_EXPIRATION_HOURS:-24}"
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             docker pull "${IMAGE}"
             if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -126,6 +138,10 @@ jobs:
               -e APP_SERVER_HOST="${server_host}" \
               -e APP_SERVER_PORT="${server_port}" \
               -e APP_DATABASE_URL="${APP_DATABASE_URL}" \
-              -e APP_JWT_SECRET="${APP_JWT_SECRET}" \
-              -e APP_JWT_EXPIRATION_HOURS="${jwt_expiration_hours}" \
+              -e APP_AUTH_JWT_SECRET="${APP_AUTH_JWT_SECRET}" \
+              -e APP_RESEND_API_KEY="${APP_RESEND_API_KEY}" \
+              -e APP_RESEND_FROM_EMAIL="${APP_RESEND_FROM_EMAIL}" \
+              -e APP_VERIFY_EMAIL_URL_BASE="${APP_VERIFY_EMAIL_URL_BASE}" \
+              -e APP_PASSWORD_RESET_URL_BASE="${APP_PASSWORD_RESET_URL_BASE}" \
+              -e APP_CORS_ALLOWED_ORIGINS="${APP_CORS_ALLOWED_ORIGINS}" \
               "${IMAGE}"

@@ -16,6 +16,7 @@
 .DS_Store
 Thumbs.db
 
-
+# Local CLI/tooling binaries
 gh.exe
-docs/
+.tools/
+/docs

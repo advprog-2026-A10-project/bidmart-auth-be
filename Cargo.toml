@@ -3,6 +3,7 @@ name = "bidmart-auth-be"
 version = "0.1.0"
 edition = "2021"
 description = "BidMart Auth Service - Clean Architecture Axum API"
+default-run = "bidmart-auth-be"
 
 [dependencies]
 axum = { version = "0.7", features = ["macros"] }
@@ -26,7 +27,7 @@ config = "0.14"
 dotenvy = "0.15"
 
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -36,6 +37,9 @@ jsonwebtoken = "9.2"
 async-trait = "0.1"
 sha2 = "0.10"
 resend-rs = { version = "0.21", default-features = false, features = ["rustls-tls"] }
+subtle = "2.5"
+totp-rs = "5"
+lapin = "2"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
