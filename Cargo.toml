@@ -39,7 +39,7 @@ sha2 = "0.10"
 resend-rs = { version = "0.21", default-features = false, features = ["rustls-tls"] }
 subtle = "2.5"
 totp-rs = "5"
-lapin = "2"
+lapin = "4"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
