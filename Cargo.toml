@@ -3,6 +3,7 @@ name = "bidmart-auth-be"
 version = "0.1.0"
 edition = "2021"
 description = "BidMart Auth Service - Clean Architecture Axum API"
+default-run = "bidmart-auth-be"
 
 [dependencies]
 axum = { version = "0.7", features = ["macros"] }
@@ -13,19 +14,20 @@ tokio = { version = "1", features = ["full"] }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+base64 = "0.22"
 
-validator = { version = "0.16", features = ["derive"] }
+validator = { version = "0.20", features = ["derive"] }
 
 thiserror = "1.0"
 anyhow = "1.0"
 
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "migrate"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "migrate"] }
 
 config = "0.14"
-dotenv = "0.15"
+dotenvy = "0.15"
 
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -33,6 +35,11 @@ scrypt = "0.10"
 rand = "0.8"
 jsonwebtoken = "9.2"
 async-trait = "0.1"
+sha2 = "0.10"
+resend-rs = { version = "0.21", default-features = false, features = ["rustls-tls"] }
+subtle = "2.5"
+totp-rs = "5"
+lapin = "2"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
