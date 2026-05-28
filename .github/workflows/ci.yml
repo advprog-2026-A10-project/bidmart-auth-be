@@ -52,7 +52,7 @@ jobs:
           toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
 
       - name: Install sqlx-cli
         shell: bash
@@ -206,7 +206,7 @@ jobs:
 
       - name: Cache Rust dependencies
         if: steps.detect.outputs.has_rust == 'true'
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
 
       - name: Rust checks
         if: steps.detect.outputs.has_rust == 'true'
