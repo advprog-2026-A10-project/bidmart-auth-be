@@ -29,6 +29,7 @@ fn test_router(context: &UseCaseTestContext) -> axum::Router {
         "auth_session".to_string(),
         false,
         "Lax".to_string(),
+        None,
         3600,
     );
 
@@ -50,6 +51,7 @@ fn auth_test_router(context: &AuthUseCaseTestContext) -> axum::Router {
         "auth_session".to_string(),
         false,
         "Lax".to_string(),
+        None,
         3600,
     );
 

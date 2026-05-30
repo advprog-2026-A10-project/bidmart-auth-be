@@ -35,6 +35,7 @@ pub struct AppConfig {
     pub auth_session_cookie_name: String,
     pub auth_session_cookie_secure: bool,
     pub auth_session_cookie_same_site: String,
+    pub auth_session_cookie_domain: Option<String>,
     pub amqp_url: Option<String>,
     pub amqp_exchange: String,
     pub internal_service_token: Option<String>,
@@ -123,6 +124,7 @@ impl AppConfig {
                 false,
             )?,
             auth_session_cookie_same_site: optional_env("APP_AUTH_SESSION_COOKIE_SAME_SITE", "Lax"),
+            auth_session_cookie_domain: optional_cookie_domain("APP_AUTH_SESSION_COOKIE_DOMAIN")?,
             amqp_url: std::env::var("APP_AMQP_URL")
                 .ok()
                 .map(|value| value.trim().to_string())
@@ -268,6 +270,17 @@ fn optional_env(key: &str, default: &str) -> String {
     }
 }
 
+fn optional_cookie_domain(key: &str) -> Result<Option<String>, ConfigError> {
+    let value = match std::env::var(key) {
+        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        Ok(_) | Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(_) => return Err(ConfigError::Message(format!("Invalid {key}"))),
+    };
+
+    validate_cookie_domain(key, &value)?;
+    Ok(Some(value))
+}
+
 fn optional_parsed_env<T>(key: &str, default: T) -> Result<T, ConfigError>
 where
     T: FromStr,
@@ -346,11 +359,35 @@ fn validate_cors_origin(key: &str, value: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
+fn validate_cookie_domain(key: &str, value: &str) -> Result<(), ConfigError> {
+    let domain = value.trim();
+    let without_leading_dot = domain.strip_prefix('.').unwrap_or(domain);
+    let valid_chars = domain
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '.');
+
+    if domain.is_empty()
+        || !valid_chars
+        || domain.contains("..")
+        || without_leading_dot.is_empty()
+        || !without_leading_dot.contains('.')
+        || without_leading_dot
+            .split('.')
+            .any(|label| label.is_empty() || label.starts_with('-') || label.ends_with('-'))
+    {
+        return Err(ConfigError::Message(format!(
+            "Invalid {key}: use a cookie domain like .bidmart.bid"
+        )));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_cors_allowed_origins_value, validate_absolute_http_url_base, validate_cors_origin,
-        validate_email_configuration,
+        parse_cors_allowed_origins_value, validate_absolute_http_url_base, validate_cookie_domain,
+        validate_cors_origin, validate_email_configuration,
     };
     use std::sync::Mutex;
 
@@ -416,6 +453,25 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn cookie_domain_validation_accepts_parent_domain() {
+        assert!(validate_cookie_domain("APP_AUTH_SESSION_COOKIE_DOMAIN", ".bidmart.bid").is_ok());
+        assert!(validate_cookie_domain("APP_AUTH_SESSION_COOKIE_DOMAIN", "bidmart.bid").is_ok());
+    }
+
+    #[test]
+    fn cookie_domain_validation_rejects_invalid_header_values() {
+        assert!(validate_cookie_domain("APP_AUTH_SESSION_COOKIE_DOMAIN", "localhost").is_err());
+        assert!(
+            validate_cookie_domain("APP_AUTH_SESSION_COOKIE_DOMAIN", ".bidmart.bid; Secure")
+                .is_err()
+        );
+        assert!(
+            validate_cookie_domain("APP_AUTH_SESSION_COOKIE_DOMAIN", "bad..bidmart.bid").is_err()
+        );
+    }
+
     #[test]
     fn production_rejects_log_email_delivery() {
         let _guard = ENV_LOCK.lock().unwrap();

@@ -20,6 +20,9 @@ This service covers BidMart authentication iteration features (`WBS 1.1-1.3`):
   - `auth_session` httpOnly cookie
 - Login/MFA verify success returns access token and sets session cookie.
 - `POST /auth/logout` revokes the active session and clears session cookie.
+- Set `APP_AUTH_SESSION_COOKIE_DOMAIN=.bidmart.bid` when the auth frontend
+  and auth API run on different subdomains and need to share the browser
+  session.
 
 ## API Surface (Current)
 

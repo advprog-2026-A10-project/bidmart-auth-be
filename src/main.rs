@@ -226,6 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.auth_session_cookie_name.clone(),
         config.auth_session_cookie_secure,
         config.auth_session_cookie_same_site.clone(),
+        config.auth_session_cookie_domain.clone(),
         config.auth_access_token_ttl_seconds,
         amqp,
         config.internal_service_token.clone(),
